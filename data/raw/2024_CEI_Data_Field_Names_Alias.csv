@@ -1,0 +1,71 @@
+Field Name,Alias
+CTUID,Census Tract Unique ID
+Communities,Calgary Community Districts
+Quadrant,City Quadrants
+total_weighted_CEI_Score,Total Equity Score
+economic_opportunity_domain_score,Economic Opportunity Domain Score
+accessibility_and_amenities_domain_score,Accessibility and Amenities Domain Score
+population_health_domain_score,Population Health Domain Score
+community_belonging_and_safety_domain_score,Community Belonging and Safety Domain Score
+human_and_social_wellbeing_domain_score,Human and Social Wellbeing Domain Score
+climate_and_environment_domain_score,Climate and Environment Domain Score
+activity_limitation_relative_severity_perc,Activity Limitation (Relative Severity) (%)
+adult_litp,Low Income Transit Pass (Adult) (%)
+average_commute_time,Commute to Work Time (minutes)
+average_transitscore,Transit Score
+average_walkscore,Walk Score
+children_perc,Children (aged 0 to 14) (%)
+commute_transit_perc,Commute to Work by Transit (%)
+commute_vehicle_perc,Commute to Work by Vehicle (%)
+copd_agestd_perc,COPD Prevalence (%)
+core_housing_owner_perc,Core Housing Need - Owner (%)
+core_housing_renter_perc,Core Housing Need - Renter (%)
+diabetes_agestd_perc,Diabetes Prevalence (%)
+educ_no_cert_perc,"No Certificate, Degree, or Diploma (%)"
+first_generation_perc,First Generation Immigrants (%)
+flood_susceptibility,Flood Susceptibility Score
+gender_income_ratio,Gender Income Ratio (After-Tax Median Income)
+income_inequality_ratio,Income Inequality Ratio (P90/P10)
+indigenous_perc,Indigenous Identity (%)
+land_surface_temp,Land Surface Temperature
+lim_at_perc,Low-Income Measure (After-Tax) (%)
+mental_illness_agestd_perc,Mental Illness Prevalence (%)
+movers_1_year_ago,Mobility Status (%)
+no_official_languages_perc,No Knowledge of Official Languages (%)
+noise_pollution_score,Noise Pollution Score
+park_area_perc,Share of Park Area (%)
+part_time_employment_perc,Part-Time or Part-Year Employment (%)
+perceived_health_vg_excellent_perc,Perceived Health (%)
+perceived_mental_vg_excellent_perc,Perceived Mental Health (%)
+person_crime_rate,Person Crime Rate
+physical_disorder_rate,Physical Disorder Rate
+population_in_poverty_perc,Population in Poverty (%)
+property_crime_rate,Property Crime Rate
+proximity_childcare,Proximity to Childcare
+proximity_grocerystores,Proximity to Grocery Store
+proximity_healthcare,Proximity to Healthcare
+proximity_library,Proximity to Library
+proximity_neighbourhood_parks,Proximity to Neighbourhood Parks
+proximity_pharmacies,Proximity to Pharmacies
+proximity_primary_education,Proximity to Primary Education
+proximity_secondary_education,Proximity to Secondary Education
+recent_immigration_perc,Recently Immigrated (%)
+refugee_perc,Refugees (%)
+regular_care_provider_yes_perc,Has a Regular Health Care Provider (%)
+renter_households_perc,Renter Households (%)
+second_generation_perc,Second Generation Immigrants (%)
+seniors_65_perc,Seniors (aged 65+) (%)
+seniors_in_poverty_perc,Seniors in Poverty (%)
+seniors_living_alone_perc,Seniors Living Alone (%)
+sense_of_belonging_perc,Sense of Belonging to Local Community (%)
+single_parent_econ_dependency,Economic Dependency Ratio (Single-Parent Families)
+single_parent_woman_perc,Single-Parent (Woman+) Households (%)
+social_assistance_perc,Social Assistance Benefits (%)
+social_disorder_rate,Social Disorder Rate
+spatial_access_primary_secondary_education_transit,Spatial Access to Primary and Secondary Education
+tree_canopy,Tree Canopy (%)
+tree_density,Tree Density
+unemployment_rate_perc,Unemployment Rate (%)
+voter_turnout_rate,Municipal Voter Turnout Rate (%)
+working_poor_18to64_perc,"Working Poor, Excluding Students (%)"
+youth_neet_perc,"Youth Not in Employment, Education, or Training (%)"
