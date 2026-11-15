@@ -1,6 +1,6 @@
 # CEI-SAT · Calgary Equity Planner
 
-A city-planning game built on the real **2024 Calgary Equity Index (CEI)**. You orbit Calgary in a satellite, then dive down to street level to place services, plant trees, designate parks and paint zoning — and you're scored on how much more *equitable* you make the city.
+A city-planning game built on the real **2024 Calgary Equity Index (CEI)**. You are Calgary's Planning Director, in command of a planning satellite above the city. You have one 8-minute term to make Calgary the most equitable city on the planet.
 
 ## Play
 
@@ -13,16 +13,22 @@ No build step and no dependencies.
 
 | | |
 |---|---|
-| **Map** | All 288 census tracts from the City's CEI shapefile, coloured by any of 30+ data layers (total score, six domains, proximity to amenities, canopy, heat, walk/transit score, turnout, and more). |
-| **Build** | Childcare, grocery, library, pharmacy, school, community centre, clinic, hospital, CTrain station, park, tree groves. Each one improves CEI domain scores within a radius, scaled by how much each tract **lacks** that service (e.g. groceries work best where `proximity_grocerystores` is low and poverty is high). |
-| **Zone** | Dense residential, suburban, commercial and industrial on a 250 m grid, each with real trade-offs (density: +walkability/transit, −parks/families/noise; suburbs: +space/kids, −commute/car dependence; industry: +jobs, −health/climate). |
-| **Bulldoze** | Removes player buildings, the existing amenities (generated from each tract's proximity scores), or Calgary landmarks. You get money back, but losing a service hurts the people who used it. |
-| **Meters** | Six city meters (Economic Opportunity, Accessibility, Health, Belonging & Safety, Social Wellbeing, Climate). They fill as equity-weighted need falls: helping high-need tracts fills them faster. |
-| **Score** | Meters + a balance bonus for your *weakest* meter + shrinking the gap between the neediest and least-needy 20% of tracts + mission stars + leftover budget. Saved to a local leaderboard. |
-| **Missions** | 10 challenges, including *Code Blue* (best hospital site, graded against a search over the whole city), *Urban Forest*, *Food Deserts*, *Civic Voice*, *Learning Gap*, *Transit-Oriented Density* and *Close the Quadrant Gap*. Placement missions grade you against the best possible locations in the data. |
-| **Street level** | Procedural blocks driven by each tract's data (walk score → towers vs houses, canopy → trees, park share → parks), landmarks such as the Calgary Tower, The Bow, the Saddledome, the Central Library, the Peace Bridge and the hospitals, and animated residents. Sick residents and ambulances appear where health need is high; happy faces appear where you've helped. |
+| **Opening** | Two residents talk at street level, the camera pulls back to orbit, and the Deputy City Manager briefs you. Skippable (button or `Esc`). |
+| **Districts** | Calgary's 288 census tracts are grouped into 12 districts. Each district is rated on six metrics: 💼 Economic Opportunity, 🚏 Accessibility & Amenities, ❤️ Population Health, 🤝 Belonging & Safety, 🌱 Human & Social Wellbeing, 🌳 Climate & Environment. |
+| **Bands** | Ratings are shown as bands, never numbers: Perfect (80–100), Good (60–79), Average (40–59), Bad (20–39), Terrible (0–19). |
+| **Build tab** | Ten buildings, each with a cost and the metrics it improves. Pick one, then click the map. A building raises the metrics of the district it stands in. |
+| **Plan tab** | Colours every district by its band for the chosen metric. Hover a district to see all six ratings. |
+| **Missions tab** | Contracts from the Deputy City Manager, such as "Bring Population Health in Forest Lawn to Average". Finishing one pays a grant. |
+| **Residents** | One resident per district wanders their neighbourhood. Hover or click them to hear what they need; it follows their district's weakest metric. |
+| **Ending** | When the timer runs out, the Deputy City Manager delivers a report card. Final score = overall equity × 100 + leftover budget ($M) × 2. |
 
-Controls: scroll to zoom, drag or right-drag to pan, `WASD`/`QE`, `1`–`9` `P` `T` for building tools, `Z X C I` for zoning, `B` to bulldoze, `L` to cycle data layers, `M` for missions, `Esc` to return to Inspect.
+Controls: scroll to zoom, drag to pan, `WASD`/arrow keys to move, `Q`/`E` to zoom, `1` `2` `3` for the Build / Plan / Missions tabs, `Enter` or `Space` to continue a message, right-click or `Esc` to cancel a building.
+
+For testing, `index.html#play` skips the opening, `#play&t=30` sets the seconds left, and `#play&end` jumps to the report card.
+
+## Tuning
+
+All numbers a designer would want to change are in `js/config.js`: term length, starting budget, income, building costs and gains, band thresholds and colours, mission count and grant sizes, final score weights, district and resident definitions, and all story text.
 
 ## Project layout
 
@@ -30,14 +36,15 @@ Controls: scroll to zoom, drag or right-drag to pan, `WASD`/`QE`, `1`–`9` `P` 
 index.html, css/style.css
 js/data/cei-data.js   generated tract data + geometry (tools/build_data.py)
 js/data/geo.js        rivers, roads, CTrain, parks and landmarks (approximate, hand-traced)
-js/core.js            namespace, projection, geometry, colour ramps
-js/config.js          domains, buildings, zones, overlays, data insights
-js/sim.js             effect model, meters, scoring, placements
-js/challenges.js      missions and grading
-js/world.js           satellite terrain and procedural street blocks
-js/sprites.js         oblique pseudo-3D buildings, landmarks, people, cars
-js/render.js          camera, layers, agents, particles
-js/ui.js, js/game.js  interface, input, game loop
+js/core.js            namespace, projection, geometry, helpers
+js/config.js          pacing, bands, metrics, buildings, districts, residents, story text
+js/sim.js             districts, scores, placement rules, final score
+js/challenges.js      mission contracts and grants
+js/world.js           satellite terrain and sparse city fabric
+js/sprites.js         isometric buildings, landmarks, residents
+js/residents.js       resident wandering, needs and thanks
+js/render.js          camera, overlay, borders, objects, particles
+js/ui.js, js/game.js  interface, Deputy City Manager panel, input, opening, game loop
 data/raw/             original City of Calgary CSV + census tract shapefile
 ```
 
@@ -45,6 +52,6 @@ To regenerate the data: `python tools/build_data.py data/raw`.
 
 ## Data
 
-City of Calgary, *Calgary Equity Index 2024* ([data.calgary.ca, dataset i6pu-a35d](https://data.calgary.ca/Demographics/Calgary-Equity-Index-2024/i6pu-a35d)), used under the Open Government Licence – City of Calgary. In the CEI, a higher score means **more** need and barriers.
+City of Calgary, *Calgary Equity Index 2024* ([data.calgary.ca, dataset i6pu-a35d](https://data.calgary.ca/Demographics/Calgary-Equity-Index-2024/i6pu-a35d)), used under the Open Government Licence – City of Calgary. In the CEI, a higher score means **more** need and barriers; the game flips this so that a higher rating is better.
 
-The game's effect model, effect radii and costs are simplified game mechanics. They are not predictions of what real investments would do. River, road and landmark positions are approximate.
+The game's effect model, costs and grants are simplified game mechanics. They are not predictions of what real investments would do. River, road and landmark positions are approximate.

@@ -7,8 +7,7 @@
 
   const world = (CP.world = {});
   world.PLANET_R = 72000; // radius of the visible "planet" disc in metres
-  world.BLOCK = 120; // street grid spacing
-  world.ROAD = 14; // street width
+  world.CELL = 900; // spacing of the sparse "city fabric" buildings (one cluster per cell)
 
   // ---------- tract paths for overlays ----------
   D.tracts.forEach((t) => {
@@ -19,6 +18,17 @@
       p.closePath();
     }
     t.path = p;
+  });
+
+  // district outlines (traced in sim.js) for borders, overlays and highlights
+  sim.districts.forEach((d) => {
+    const p = new Path2D();
+    for (const loop of d.loops) {
+      p.moveTo(loop[0][0], loop[0][1]);
+      for (let k = 1; k < loop.length; k++) p.lineTo(loop[k][0], loop[k][1]);
+      p.closePath();
+    }
+    d.path = p;
   });
 
   const polyPath = (poly) => {
@@ -95,7 +105,7 @@
         let id = 0;
         if (ids[o + 2] > 60 && ids[o + 2] < 95) id = ids[o] + (ids[o + 1] << 8);
         const t = id > 0 && id <= tracts.length ? tracts[id - 1] : null;
-        const n = CP.hash(x, y, 3);
+        const n = CP.hash(x >> 1, y >> 1, 3); // 2x2 pixel blocks: calmer texture from orbit
         let r, g, bl;
         if (!t) {
           px[o + 3] = 0; // let the regional farmland show through
@@ -104,25 +114,22 @@
           const dens = t.average_walkscore / 100;
           const canopy = t.tree_canopy / 100;
           const park = t.park_area_perc / 100;
-          const blk = Math.round(CP.lerp(9, 5, dens));
-          const street = x % blk === 0 || y % blk === 0;
           const zone = CP.hash(Math.floor(wx / 260), Math.floor(wy / 260), 11);
           if (zone < park * 0.9) {
-            const k = 0.85 + n * 0.25;
+            const k = 0.9 + n * 0.15;
             r = 92 * k; g = 150 * k; bl = 76 * k;
             if (n < canopy * 1.6 + 0.1) { r = 52; g = 102 + n * 30; bl = 52; }
           } else if (n < canopy * 1.25) {
             r = 54 + n * 30; g = 104 + n * 40; bl = 56;
-          } else if (street) {
-            r = g = bl = 120 + dens * 30;
           } else {
-            const roof = CP.hash(x >> 1, y >> 1, 7);
-            const light = 0.8 + roof * 0.35;
+            // soft roof/lawn mottling only: no street grid (major roads are drawn as vectors)
+            const roof = CP.hash(x >> 2, y >> 2, 7);
+            const light = 0.9 + roof * 0.16;
             const cool = dens; // denser = greyer, suburbs = warmer roofs / lawns
-            r = CP.lerp(196, 150, cool) * light;
-            g = CP.lerp(182, 150, cool) * light;
-            bl = CP.lerp(150, 158, cool) * light;
-            if (roof < 0.22 && dens < 0.6) { r = 128; g = 160; bl = 96; } // lawns
+            r = CP.lerp(190, 156, cool) * light;
+            g = CP.lerp(180, 156, cool) * light;
+            bl = CP.lerp(150, 160, cool) * light;
+            if (roof < 0.25 && dens < 0.6) { r = 136; g = 164; bl = 104; } // lawns
           }
         }
         px[o] = r; px[o + 1] = g; px[o + 2] = bl; px[o + 3] = 255;
@@ -241,154 +248,78 @@
     world.far = buildFarTerrain();
   };
 
-  // ---------- street-level blocks ----------
-  // Each 120 m block becomes lots, buildings and trees according to the tract it sits in
-  // (walk score, canopy, park share, children) and any zoning the player painted.
+  // ---------- city fabric ----------
+  // A sparse layer of large, simple buildings and trees that hints at what each area is like
+  // (towers downtown, houses in the suburbs, sheds in industrial land). One cluster per 900 m cell,
+  // drawn about 10x real size so it still reads from orbit. Purely decorative.
   const cache = new Map();
-  world.invalidate = function (x, y, r) {
-    for (const [k, v] of cache) if (CP.dist(v.cx, v.cy, x, y) < r + 200) cache.delete(k);
-  };
-  world.invalidateAll = () => cache.clear();
+  world.reserved = []; // [x, y, radius] spots kept clear, e.g. for the opening scene
 
-  world.zoneAt = function (x, y) {
-    const cx = Math.floor(x / CP.ZONE_CELL), cy = Math.floor(y / CP.ZONE_CELL);
-    return world.zones.get(cx + "," + cy);
-  };
-  world.zones = new Map(); // "cx,cy" -> placement
-
-  const ROOFS = ["#c0504d", "#8c5a3c", "#5d6d7e", "#a9746e", "#6b8e23", "#7a6a5a", "#3e5c76", "#b5651d", "#8e8e8e"];
+  const ROOFS = ["#c0504d", "#8c5a3c", "#5d6d7e", "#a9746e", "#6b8e23", "#7a6a5a", "#3e5c76", "#b5651d"];
   const WALLS = ["#f2e6d0", "#e8d8c3", "#d9d4cc", "#f5efe6", "#e0cda9", "#cfd8dc"];
   const GLASS = ["#6fa8dc", "#7fb3d5", "#5d8aa8", "#9bc4e2", "#4f7fa6", "#8fb9c9"];
 
-  function classify(t, zone, h) {
-    if (zone) {
-      return { dense: h < 0.25 ? "tower" : "midrise", suburban: "house", commercial: "shops", industrial: "industrial" }[zone.type];
-    }
-    if (!t) return "farm";
+  function classify(t, h) {
     const walk = t.average_walkscore, kids = t.children_perc;
     if (walk > 88 && t.average_transitscore > 75) return h < 0.6 ? "tower" : "midrise";
-    if (walk > 72) return h < 0.15 ? "tower" : h < 0.75 ? "midrise" : "house";
+    if (walk > 72) return h < 0.15 ? "tower" : h < 0.7 ? "midrise" : "house";
     if (walk < 30 && kids < 9 && t.renter_households_perc < 30) return h < 0.7 ? "industrial" : "house";
-    if (walk < 45 && h < 0.07) return "shops";
-    return h < 0.08 ? "midrise" : "house";
+    if (walk < 45 && h < 0.1) return "shops";
+    return h < 0.1 ? "midrise" : "house";
   }
 
-  // land kept clear of procedural buildings: landmarks and every service building
+  // land kept clear around landmarks (their sprites are drawn LM_SCALE times real size)
   const LM_CLEAR = { campus: 170, mall: 190, zoo: 190, airport: 220, stampede: 120, stadium: 110, hospital: 85, kidsHospital: 70, cityHall: 70, saddledome: 85, heritage: 110, skiJump: 60, library: 75, studioBell: 50, spark: 75, bow: 60, calgaryTower: 30, tower: 35, peaceBridge: 20, fort: 50 };
-  function reservedNear(cx, cy) {
-    const out = [];
-    for (const l of CP.LANDMARKS) {
-      if (l.placement && l.placement.removed) continue;
-      const r = LM_CLEAR[l.kind] || 50;
-      if (CP.dist(l.pos[0], l.pos[1], cx, cy) < r + 120) out.push([l.pos[0], l.pos[1], r]);
-    }
-    for (const p of sim.placements) {
-      if (p.removed || (p.kind !== "building" && p.kind !== "existing") || p.type === "trees" || p.type === "park") continue;
-      if (Math.abs(p.x - cx) > 200 || Math.abs(p.y - cy) > 200) continue;
-      const sh = CP.sprites && CP.sprites.SHAPES[p.type];
-      out.push([p.x, p.y, sh ? Math.max(sh.w, sh.d) * 0.6 : 25]);
-    }
-    return out;
+  world.LM_SCALE = 3;
+  function isReserved(x, y) {
+    for (const l of CP.LANDMARKS) if (CP.dist(l.pos[0], l.pos[1], x, y) < (LM_CLEAR[l.kind] || 50) * world.LM_SCALE + 220) return true;
+    for (const r of world.reserved) if (CP.dist(r[0], r[1], x, y) < r[2]) return true;
+    return false;
   }
+  world.clearCells = () => cache.clear();
 
-  world.block = function (bx, by) {
-    const key = bx + "," + by;
+  world.cell = function (bx, by) {
+    const key = bx * 4096 + by;
     let c = cache.get(key);
     if (c) return c;
-    const B = world.BLOCK, Rd = world.ROAD;
-    const x0 = bx * B + Rd / 2, y0 = by * B + Rd / 2, x1 = (bx + 1) * B - Rd / 2, y1 = (by + 1) * B - Rd / 2;
-    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-    const t = sim.tractAt(cx, cy);
-    const zone = world.zoneAt(cx, cy);
+    const B = world.CELL;
     const rand = CP.rng(bx * 92821 + by * 68917 + 7);
-    const h = rand();
-    c = { cx, cy, x0, y0, x1, y1, t, items: [], ground: null, zone };
+    const cx = (bx + 0.3 + rand() * 0.4) * B, cy = (by + 0.3 + rand() * 0.4) * B;
+    const t = sim.tractAt(cx, cy);
+    c = { cx, cy, t, items: [], ground: null };
     cache.set(key, c);
-    if (cache.size > 4000) cache.delete(cache.keys().next().value);
+    if (!t) return c;
+    if (world.waterAt(cx, cy, 170)) { c.ground = "water"; return c; }
 
-    if (world.waterAt(cx, cy, 25)) { c.ground = "water"; return c; }
-    const hw = world.highwayAt(cx, cy, 30);
+    const h = rand();
     const bigPark = world.bigParkAt(cx, cy);
-    const playerPark = sim.active((p) => p.kind === "building" && p.type === "park" && CP.dist(p.x, p.y, cx, cy) < 170)[0];
-    const parkChance = t ? (t.park_area_perc / 100) * 0.8 : 0;
-    let cls = classify(t, zone, h);
-    if (playerPark || bigPark || (!zone && t && CP.hash(Math.floor(cx / 260), Math.floor(cy / 260), 11) < parkChance * 0.9)) cls = "park";
-    c.cls = cls;
-    c.ground = cls === "farm" ? "farm" : cls === "park" ? "park" : cls === "industrial" ? "lot" : cls === "house" ? "lawn" : "plaza";
-
-    const canopy = t ? t.tree_canopy / 100 : 0.02;
-    const addTree = (x, y, s) => c.items.push({ type: "tree", x, y, s: s || 4 + rand() * 4, hue: rand() });
-    const reserved = reservedNear(cx, cy);
-    // keep the skyline readable: generic towers stay short right in front of signature towers
-    let heightCap = Infinity;
-    for (const l of CP.LANDMARKS) {
-      if (l.h < 120) continue;
-      const dx = cx - l.pos[0], dy = cy - l.pos[1];
-      if (Math.abs(dx) < 260 && dy > -60 && dy < 420) heightCap = Math.min(heightCap, 30 + Math.max(0, dy - 200) * 0.3);
-    }
-    const box = (x, y, w, d, hh, style) => {
-      for (const r of reserved) if (CP.dist(x + w / 2, y + d / 2, r[0], r[1]) < r[2] + Math.max(w, d) / 2) return;
-      if (hw && world.highwayAt(x + w / 2, y + d / 2, 10)) return;
-      if (world.waterAt(x + w / 2, y + d / 2, 10)) return;
-      c.items.push(Object.assign({ type: "box", x, y, w, d, h: Math.min(hh, heightCap) }, style));
+    const isPark = bigPark || CP.hash(bx, by, 11) < (t.park_area_perc / 100) * 0.9;
+    const cls = isPark ? "park" : classify(t, h);
+    c.ground = cls === "park" ? "park" : cls === "industrial" ? "lot" : cls === "house" ? "lawn" : "plaza";
+    const canopy = t.tree_canopy / 100;
+    const tree = (x, y) => {
+      for (const r of world.reserved) if (CP.dist(r[0], r[1], x, y) < r[2]) return;
+      if (!world.waterAt(x, y, 60) && !world.highwayAt(x, y, 60)) c.items.push({ type: "tree", x, y, s: 42 + rand() * 30, hue: rand() });
     };
-    const W = x1 - x0, H = y1 - y0;
+    const pick = (arr) => arr[Math.floor(rand() * arr.length)];
 
-    if (cls === "farm") {
-      if (rand() < 0.08) box(x0 + 20 + rand() * 40, y0 + 20 + rand() * 40, 14, 10, 6, { roof: "#9b2d20", wall: "#d8c7a8" });
-      if (rand() < 0.3) addTree(x0 + rand() * W, y0 + rand() * H, 6);
-      c.fieldHue = CP.hash(Math.floor(cx / 800), Math.floor(cy / 800), 9);
-    } else if (cls === "park") {
-      const n = Math.round(6 + canopy * 40 + (bigPark ? 10 : 0));
-      for (let i = 0; i < n; i++) addTree(x0 + rand() * W, y0 + rand() * H);
-      c.path = rand() < 0.7;
-      if (rand() < 0.25) c.pond = { x: x0 + W * (0.3 + rand() * 0.4), y: y0 + H * (0.3 + rand() * 0.4), r: 10 + rand() * 12 };
-      if (rand() < 0.2) c.items.push({ type: "playground", x: x0 + 20 + rand() * (W - 40), y: y0 + 20 + rand() * (H - 40) });
-    } else if (cls === "house") {
-      // two rows of detached homes facing the streets
-      const lotW = 16 + rand() * 4;
-      const n = Math.floor(W / lotW);
-      for (let row = 0; row < 2; row++) {
-        for (let i = 0; i < n; i++) {
-          const lx = x0 + i * lotW + 2, ly = row === 0 ? y0 + 6 : y1 - 20;
-          if (rand() < 0.06) continue;
-          const roof = ROOFS[Math.floor(rand() * ROOFS.length)];
-          box(lx + 1, ly, lotW - 5, 12, 5 + rand() * 4, { roof, wall: WALLS[Math.floor(rand() * WALLS.length)], house: true });
-          if (rand() < canopy * 3 + 0.15) addTree(lx + lotW / 2, row === 0 ? ly + 26 : ly - 10);
-        }
-      }
-      for (let i = 0; i < canopy * 25; i++) addTree(x0 + rand() * W, y0 + H * (0.4 + rand() * 0.2));
-    } else if (cls === "midrise") {
-      const nx = 2 + Math.floor(rand() * 2), ny = 2;
-      const gw = W / nx, gh = H / ny;
-      for (let i = 0; i < nx; i++)
-        for (let j = 0; j < ny; j++) {
-          if (rand() < 0.1) { addTree(x0 + (i + 0.5) * gw, y0 + (j + 0.5) * gh, 7); continue; }
-          const hh = 12 + rand() * 30;
-          box(x0 + i * gw + 3, y0 + j * gh + 3, gw - 6, gh - 6, hh, {
-            roof: "#9aa0a6", wall: WALLS[Math.floor(rand() * WALLS.length)], windows: true, shop: j === 1 && rand() < 0.5,
-          });
-        }
-      for (let i = 0; i < canopy * 12; i++) addTree(x0 + rand() * W, y0 - 2 + (rand() < 0.5 ? 0 : H + 4), 4);
-    } else if (cls === "tower") {
-      const n = 1 + Math.floor(rand() * 2);
-      for (let i = 0; i < n; i++) {
-        const w = 26 + rand() * 18, d = 24 + rand() * 18;
-        const hh = 60 + rand() * 140;
-        box(x0 + (n === 1 ? (W - w) / 2 : i * (W / 2) + 4), y0 + (H - d) / 2 + (rand() - 0.5) * 20, w, d, hh, {
-          roof: "#7d8790", glass: GLASS[Math.floor(rand() * GLASS.length)], windows: true,
-        });
-      }
-      for (let i = 0; i < 4; i++) addTree(x0 + rand() * W, y0 + 3, 3.5);
-    } else if (cls === "shops") {
-      box(x0 + 6, y0 + 6, W - 12, H * 0.45, 7 + rand() * 4, { roof: "#cfd2d6", wall: "#f0e4cc", shop: true, sign: Math.floor(rand() * 5) });
-      c.parking = true;
-    } else if (cls === "industrial") {
-      const n = 1 + Math.floor(rand() * 2);
-      for (let i = 0; i < n; i++) {
-        box(x0 + 6 + i * (W / n), y0 + 10, W / n - 12, H * 0.55, 9 + rand() * 6, { roof: rand() < 0.5 ? "#8fa3b5" : "#b0b4b8", wall: "#c9c5bb", industrial: true, stack: rand() < 0.4 });
-      }
-      c.parking = true;
+    if (cls === "park") {
+      const n = Math.round(3 + canopy * 12 + (bigPark ? 3 : 0));
+      for (let i = 0; i < n; i++) tree(cx + (rand() - 0.5) * B * 0.8, cy + (rand() - 0.5) * B * 0.8);
+      return c;
+    }
+    const clear = !world.highwayAt(cx, cy, 190) && !isReserved(cx, cy);
+    if (clear) {
+      if (cls === "house") c.items.push({ type: "amb", kind: "house", x: cx, y: cy, wall: pick(WALLS), roof: pick(ROOFS), h: 11 + rand() * 4 });
+      else if (cls === "midrise") c.items.push({ type: "amb", kind: "midrise", x: cx, y: cy, wall: pick(WALLS), h: 30 + rand() * 28 });
+      else if (cls === "tower") c.items.push({ type: "amb", kind: "tower", x: cx, y: cy, wall: pick(GLASS), h: 70 + rand() * 70 });
+      else if (cls === "shops") c.items.push({ type: "amb", kind: "shops", x: cx, y: cy, wall: "#f0e4cc", roof: pick(["#e63946", "#2a9d8f", "#f4a261", "#457b9d"]) });
+      else if (cls === "industrial") c.items.push({ type: "amb", kind: "industrial", x: cx, y: cy, wall: "#c9c5bb", roof: rand() < 0.5 ? "#8fa3b5" : "#b0b4b8", stack: rand() < 0.5 });
+    }
+    const nTrees = cls === "house" ? Math.round(canopy * 14 + rand()) : cls === "industrial" ? 0 : Math.round(canopy * 6);
+    for (let i = 0; i < nTrees; i++) {
+      const a = rand() * 7, r = 230 + rand() * 180;
+      tree(cx + Math.cos(a) * r, cy + Math.sin(a) * r * 0.8);
     }
     return c;
   };

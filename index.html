@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>CEI-SAT · Calgary Equity Planner</title>
+  <title>CEI-SAT · Make Calgary the most equitable city on the planet</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="css/style.css" />
@@ -16,95 +16,81 @@
     <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
     <div class="scan"></div>
     <div id="sat-readout">
-      <div><b>CEI-SAT 1</b> · ORBIT LOCK</div>
+      <div><b>CEI-SAT 1</b> · PLANNING SATELLITE</div>
       <div>ALT <span id="alt">408 km</span></div>
-      <div id="coords">51.0447°N 114.0719°W</div>
     </div>
   </div>
 
-  <!-- top bar -->
-  <header id="topbar" class="panel hidden">
-    <div class="brand"><span class="logo">🛰️</span><div><div class="title">CEI-SAT</div><div class="sub">Calgary Equity Planner</div></div></div>
-    <div class="stat" title="Remaining capital budget"><span class="lbl">Budget</span><span id="budget" class="val">$900M</span></div>
-    <div class="stat" title="Average Total Equity Score across all 288 census tracts (lower = less need)"><span class="lbl">City avg need</span><span id="cityneed" class="val">-</span></div>
-    <div class="stat" title="Gap between the neediest 20% and least needy 20% of tracts"><span class="lbl">Equity gap</span><span id="gap" class="val">-</span></div>
-    <div class="stat score" title="Your score"><span class="lbl">Score</span><span id="score" class="val">0</span></div>
-    <div class="spacer"></div>
-    <button class="btn" id="btn-missions">🎯 Missions <span id="mission-count" class="pill">0/10</span></button>
-    <button class="btn" id="btn-insights">💡 Data Insights</button>
-    <button class="btn" id="btn-leaderboard">🏆 Leaderboard</button>
-    <button class="btn icon" id="btn-sound" title="Toggle sound">🔊</button>
-    <button class="btn icon" id="btn-help" title="How to play">❔</button>
-    <button class="btn primary" id="btn-end">🏁 End Term</button>
-  </header>
+  <!-- always-visible strip: budget, time left, overall equity -->
+  <div id="status" class="panel hidden">
+    <div class="stat" title="Money you can spend on buildings"><span class="lbl">Budget</span><span id="budget" class="val">$30M</span></div>
+    <div class="stat" title="Time left in your term"><span class="lbl">Term ends in</span><span id="timer" class="val">8:00</span></div>
+    <div class="stat" title="Calgary's overall equity rating"><span class="lbl">Calgary equity</span><span id="equity" class="val"></span></div>
+    <button class="btn icon" id="btn-sound" title="Sound on/off">🔊</button>
+  </div>
 
-  <!-- tools -->
-  <nav id="toolbar" class="panel hidden"></nav>
+  <!-- the three tabs -->
+  <nav id="tabs" class="panel hidden">
+    <button class="tab" data-tab="build">🏗️ Build</button>
+    <button class="tab" data-tab="plan">🗺️ Plan</button>
+    <button class="tab" data-tab="missions">🎯 Missions <span id="mission-count" class="pill"></span></button>
+  </nav>
 
-  <!-- meters + tract info -->
-  <aside id="rightcol" class="hidden">
-    <section id="meters" class="panel">
-      <h3>City Wellbeing Meters <span class="hint" title="Meters fill as need falls — faster when you help the tracts with the highest equity scores.">ⓘ</span></h3>
-      <div id="meter-list"></div>
+  <!-- only the active tab's panel is shown -->
+  <aside id="panel" class="panel hidden">
+    <section id="panel-build" class="tabpanel">
+      <h3>Build</h3>
+      <p class="muted">Pick a building, then click the map to place it.</p>
+      <div id="build-list"></div>
     </section>
-    <section id="info" class="panel">
-      <div id="info-body"><p class="muted">Hover a district to read its data. Click to pin it.</p></div>
+    <section id="panel-plan" class="tabpanel">
+      <h3>Plan</h3>
+      <p class="muted">The map shows how fair each district is. Hover over a district to see all six ratings.</p>
+      <div id="metric-list"></div>
+      <div id="metric-about"></div>
+      <div id="band-legend"></div>
+    </section>
+    <section id="panel-missions" class="tabpanel">
+      <h3>Missions</h3>
+      <p class="muted">Contracts from the Deputy City Manager. Finish one to earn its grant.</p>
+      <div id="mission-list"></div>
     </section>
   </aside>
 
-  <!-- overlay legend -->
-  <section id="legend" class="panel hidden">
-    <div class="row">
-      <label for="overlay-select">Data layer</label>
-      <select id="overlay-select"></select>
-    </div>
-    <div id="legend-bar"></div>
-    <div class="row small">
-      <span id="legend-min"></span><span id="legend-label" class="muted"></span><span id="legend-max"></span>
-    </div>
-    <div class="row small">
-      <label><input type="range" id="overlay-alpha" min="0" max="90" value="55" /> opacity</label>
-      <label><input type="checkbox" id="labels-toggle" checked /> labels</label>
-    </div>
-  </section>
-
-  <div id="ticker" class="hidden"></div>
   <div id="tooltip" class="hidden"></div>
+  <div id="speech" class="hidden"></div>
   <div id="toasts"></div>
+  <button id="btn-skip" class="btn hidden">Skip intro ▸▸</button>
 
-  <!-- missions drawer -->
-  <section id="missions" class="drawer panel">
-    <header><h2>🎯 Missions</h2><button class="btn icon close" data-close="missions">✕</button></header>
-    <p class="muted">Each mission is graded on <b>where</b> you build compared to the best possible spots in the real 2024 Calgary Equity Index. Stars add bonus points.</p>
-    <div id="mission-list"></div>
-  </section>
-
-  <!-- insights drawer -->
-  <section id="insights" class="drawer panel">
-    <header><h2>💡 What the data says</h2><button class="btn icon close" data-close="insights">✕</button></header>
-    <p class="muted">Findings from the 2024 Calgary Equity Index (288 census tracts, 61 indicators). Click one to view its map layer.</p>
-    <div id="insight-list"></div>
-  </section>
+  <!-- Deputy City Manager transmission panel (used for every message from her) -->
+  <div id="dcm" class="hidden">
+    <div class="dcm-frame">
+      <i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i>
+      <div class="dcm-portrait"><canvas id="dcm-face" width="224" height="264"></canvas></div>
+      <div class="dcm-body">
+        <div class="dcm-kicker">◈ Incoming transmission · City Hall</div>
+        <div class="dcm-name" id="dcm-name"></div>
+        <div class="dcm-title" id="dcm-title"></div>
+        <div class="dcm-text" id="dcm-text"></div>
+        <div class="dcm-extra" id="dcm-extra"></div>
+        <div class="dcm-actions"><span id="dcm-page"></span><button id="dcm-next">Continue ▸</button></div>
+      </div>
+    </div>
+  </div>
 
   <!-- title -->
   <div id="title" class="screen">
     <div class="title-card">
-      <div class="kicker">🛰️ Mission control · Low Earth Orbit</div>
+      <div class="kicker">🛰️ City of Calgary · Planning Satellite</div>
       <h1>CEI<span>-</span>SAT</h1>
-      <h2>Calgary Equity Planner</h2>
-      <p>From 408 km up, Calgary looks like one city. The data says it's many. The <b>Calgary Equity Index</b> scores all 288 census tracts on six domains of wellbeing — from <b>16.8</b> in Elbow Park to <b>78.1</b> in Forest Lawn.</p>
-      <p>You have <b>$900 million</b> and one term. Build where it matters.</p>
+      <h2>Make Calgary the most equitable city on the planet</h2>
+      <p>You are Calgary's new <b>Planning Director</b>. From a satellite high above the city, you decide what gets built, and where.</p>
+      <p>You have one <b>8-minute term</b> and a small budget. Build where life is least fair.</p>
       <div class="title-actions">
-        <button class="btn primary big" id="btn-start">🚀 Begin Descent</button>
-        <button class="btn big" id="btn-title-leaderboard">🏆 Leaderboard</button>
+        <button class="btn primary big" id="btn-start">▶ Begin your term</button>
       </div>
       <div class="credit">Data: City of Calgary, <i>Calgary Equity Index 2024</i> (Open Government Licence – City of Calgary)</div>
     </div>
-  </div>
-
-  <!-- generic modal -->
-  <div id="modal" class="screen hidden">
-    <div class="modal-card panel" id="modal-card"></div>
   </div>
 
   <div id="loading" class="screen"><div class="spinner"></div><div>Calibrating satellite optics…</div></div>
@@ -117,6 +103,7 @@
   <script src="js/challenges.js"></script>
   <script src="js/world.js"></script>
   <script src="js/sprites.js"></script>
+  <script src="js/residents.js"></script>
   <script src="js/render.js"></script>
   <script src="js/audio.js"></script>
   <script src="js/ui.js"></script>

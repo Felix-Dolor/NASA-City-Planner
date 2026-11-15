@@ -80,19 +80,14 @@
   CP.signed = (v, d = 1) => (v >= 0 ? "+" : "") + v.toFixed(d);
   CP.esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-  // ---------- colour ramps ----------
-  function mix(c1, c2, t) {
-    return [0, 1, 2].map((i) => Math.round(c1[i] + (c2[i] - c1[i]) * t));
-  }
-  function ramp(stops, t) {
-    t = CP.clamp(t, 0, 1) * (stops.length - 1);
-    const i = Math.min(stops.length - 2, Math.floor(t));
-    return mix(stops[i], stops[i + 1], t - i);
-  }
-  // need ramp: low need = teal/green, high need = hot magenta/red
-  CP.NEED_STOPS = [[30, 200, 160], [140, 220, 90], [250, 215, 70], [250, 130, 50], [225, 40, 90]];
-  CP.GOOD_STOPS = CP.NEED_STOPS.slice().reverse();
-  CP.IMPACT_STOPS = [[220, 60, 80], [60, 60, 70], [80, 230, 140]];
-  CP.rampRGB = (stops, t) => ramp(stops, t);
-  CP.rgba = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+  CP.clock = (sec) => {
+    sec = Math.max(0, Math.ceil(sec));
+    return Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0");
+  };
+
+  // ---------- colour ----------
+  CP.hexA = function (hex, a) {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  };
 })();

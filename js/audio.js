@@ -47,6 +47,8 @@
   A.tree = () => tone(880 + Math.random() * 200, 0.07, "sine", 0.05);
   A.fanfare = () => [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.25, "triangle", 0.12, i * 0.11));
   A.whoosh = () => { if (!A.muted) tone(80, 2.5, "sine", 0.08, 0, 400); };
+  A.radio = () => { tone(1250, 0.07, "sine", 0.05); tone(940, 0.07, "sine", 0.05, 0.09); tone(1250, 0.12, "sine", 0.05, 0.18); };
+  A.blip = () => tone(1500 + Math.random() * 200, 0.02, "square", 0.012);
   A.toggle = () => {
     A.muted = !A.muted;
     localStorage.setItem("cei-muted", A.muted ? "1" : "0");

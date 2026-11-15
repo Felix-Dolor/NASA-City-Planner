@@ -1,5 +1,5 @@
-// Simulation: turns placements into changes in each census tract's six CEI domain scores,
-// and turns those into the six city meters and the final score.
+// Simulation: groups Calgary's census tracts into districts, scores every district on the six
+// equity metrics (0-100, higher = more equitable) and applies the buildings the player places.
 (function () {
   const CP = window.CP;
   const D = window.CEI_DATA;
@@ -7,11 +7,11 @@
 
   const sim = (CP.sim = {
     tracts: D.tracts,
-    placements: [], // every building/zone/existing amenity/landmark the sim knows about
+    districts: [],
+    buildings: [], // everything the player has placed
     budget: CP.START_BUDGET,
     spent: 0,
     nextId: 1,
-    listeners: [],
   });
 
   // ---------- tract prep ----------
@@ -20,77 +20,34 @@
     return s[Math.min(s.length - 1, Math.floor(p * (s.length - 1)))];
   };
   const col = (k) => D.tracts.map((t) => t[k]);
-  const norm = (k, p) => {
-    const hi = pct(col(k), p || 0.9), lo = pct(col(k), 0.05);
-    return (t) => CP.clamp((t[k] - lo) / (hi - lo || 1), 0, 1);
-  };
-  const lack = (k) => {
-    const hi = pct(col(k), 0.85) || 0.01;
-    return (t) => 1 - CP.clamp(t[k] / hi, 0, 1);
-  };
-  const N = {
-    lackChildcare: lack("proximity_childcare"),
-    lackGrocery: lack("proximity_grocerystores"),
-    lackLibrary: lack("proximity_library"),
-    lackPharmacy: lack("proximity_pharmacies"),
-    lackSchool: lack("proximity_primary_education"),
-    lackHealth: lack("proximity_healthcare"),
-    lackParkProx: lack("proximity_neighbourhood_parks"),
-    lackPark: lack("park_area_perc"),
-    children: norm("children_perc"),
-    poverty: norm("population_in_poverty_perc"),
-    noCert: norm("educ_no_cert_perc"),
-    diabetes: norm("diabetes_agestd_perc"),
-    heat: norm("land_surface_temp"),
-    transit: norm("average_transitscore"),
-    longCommute: norm("average_commute_time"),
-    unemployment: norm("unemployment_rate_perc"),
-    carDependent: norm("commute_vehicle_perc"),
-    churn: norm("movers_1_year_ago"),
-    noProvider: (t) => CP.clamp((100 - t.regular_care_provider_yes_perc) / 25, 0, 1),
-    lowVote: (t) => CP.clamp((62 - t.voter_turnout_rate) / 36, 0, 1),
-    lowBelonging: (t) => CP.clamp((75 - t.sense_of_belonging_perc) / 30, 0, 1),
-    lowCanopy: (t) => CP.clamp(1 - t.tree_canopy / 25, 0, 1),
-    lowTransit: (t) => CP.clamp(1 - (t.average_transitscore - 20) / 60, 0, 1),
-  };
-
-  const medianTotal = pct(col("total_weighted_CEI_Score"), 0.5);
-  let wSum = 0;
+  const SC = CP.SCORE_SCALE;
+  const lo = D.domains.map((k) => pct(col(k), 0.05));
+  const hi = D.domains.map((k) => pct(col(k), 0.95));
   D.tracts.forEach((t, i) => {
     t.idx = i;
-    t.n = {};
-    for (const k in N) t.n[k] = N[k](t);
-    t.n.healthGap = CP.clamp(0.45 * t.n.lackHealth + 0.4 * t.n.noProvider + 0.35 * (t.population_health_domain_score / 70), 0, 1.2) / 1.2;
-    t.base = { need: D.domains.map((k) => t[k]), total: t.total_weighted_CEI_Score };
-    t.live = { need: t.base.need.slice(), total: t.base.total };
-    t.P = new Float32Array(ND); // accumulated gains
-    t.Nx = new Float32Array(ND); // accumulated harms
-    t.r = Math.sqrt(t.area / Math.PI);
-    // equity weight: helping high-need tracts fills meters faster
-    t.w = Math.pow(t.base.total / medianTotal, 1.6);
-    wSum += t.w;
-    // bbox
+    // CEI domain score (higher = more need) -> equity score (higher = better), relative to the rest of Calgary
+    t.s = D.domains.map((k, j) => CP.clamp(SC.best - (SC.span * (t[k] - lo[j])) / (hi[j] - lo[j] || 1), SC.min, SC.max));
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const r of t.rings) for (let k = 0; k < r.length; k += 2) {
       x0 = Math.min(x0, r[k]); x1 = Math.max(x1, r[k]); y0 = Math.min(y0, r[k + 1]); y1 = Math.max(y1, r[k + 1]);
     }
     t.bbox = [x0, y0, x1, y1];
   });
-  sim.medianTotal = medianTotal;
 
-  // ---------- spatial index ----------
+  // ---------- tract spatial index ----------
   const GS = 1000;
-  const grid = new Map();
+  const gkey = (gx, gy) => (gx + 500) * 4096 + gy + 500;
+  const tgrid = new Map();
   D.tracts.forEach((t) => {
     for (let gx = Math.floor(t.bbox[0] / GS); gx <= Math.floor(t.bbox[2] / GS); gx++)
       for (let gy = Math.floor(t.bbox[1] / GS); gy <= Math.floor(t.bbox[3] / GS); gy++) {
-        const k = gx + "," + gy;
-        if (!grid.has(k)) grid.set(k, []);
-        grid.get(k).push(t);
+        const k = gkey(gx, gy);
+        if (!tgrid.has(k)) tgrid.set(k, []);
+        tgrid.get(k).push(t);
       }
   });
   sim.tractAt = function (x, y) {
-    const c = grid.get(Math.floor(x / GS) + "," + Math.floor(y / GS));
+    const c = tgrid.get(gkey(Math.floor(x / GS), Math.floor(y / GS)));
     if (!c) return null;
     for (const t of c) {
       const b = t.bbox;
@@ -98,241 +55,189 @@
     }
     return null;
   };
-  sim.randomPointIn = function (t, rand) {
-    const b = t.bbox;
-    for (let i = 0; i < 40; i++) {
-      const x = CP.lerp(b[0], b[2], rand()), y = CP.lerp(b[1], b[3], rand());
-      if (CP.pointInRings(x, y, t.rings)) return [x, y];
+
+  // ---------- districts ----------
+  sim.districts = CP.DISTRICTS.map((def, id) => {
+    const [x, y] = CP.project(def.at[0], def.at[1]);
+    return { id, name: def.name, def, x, y, tracts: [], base: new Array(ND).fill(0), add: new Array(ND).fill(0), score: new Array(ND).fill(0), overall: 0, loops: [] };
+  });
+  for (const t of sim.tracts) {
+    let best = null, bd = Infinity;
+    for (const d of sim.districts) {
+      const dd = CP.dist(d.x, d.y, t.c[0], t.c[1]);
+      if (dd < bd) { bd = dd; best = d; }
     }
-    return t.c.slice();
-  };
-
-  // ---------- effect model ----------
-  function specOf(p) {
-    if (p.kind === "zone") return CP.ZONES[p.type];
-    if (p.kind === "landmark") return p.spec;
-    return CP.BUILDINGS[p.type];
+    t.d = best;
+    best.tracts.push(t);
   }
-
-  // returns [{t, gain:[6], harm:[6]}] for every tract the placement touches
-  function contributions(p) {
-    const s = specOf(p);
-    const out = [];
-    const radius = p.kind === "zone" ? 900 : s.radius;
-    const home = sim.tractAt(p.x, p.y);
-    const scale = p.kind === "existing" || p.kind === "landmark" ? -1 : 1; // destroying existing service = harm
-    for (const t of sim.tracts) {
-      const d = CP.dist(p.x, p.y, t.c[0], t.c[1]);
-      if (d > radius + t.r) continue;
-      let fall = t === home ? 1 : CP.clamp(1 - Math.max(0, d - t.r * 0.6) / radius, 0, 1);
-      if (fall <= 0) continue;
-      fall *= fall > 0.999 ? 1 : 0.85;
-      const gain = new Array(ND).fill(0), harm = new Array(ND).fill(0);
-      if (scale > 0) {
-        const rel = s.rel(t.n);
-        const pen = s.penalty ? s.penalty(t.n) : 1;
-        for (let i = 0; i < ND; i++) {
-          gain[i] = s.gain[i] * rel * fall;
-          harm[i] = s.cost_fx[i] * pen * fall;
-        }
-      } else {
-        // removal of something that already served this tract
-        const loss = p.kind === "landmark" ? s.loss : s.gain;
-        for (let i = 0; i < ND; i++) harm[i] = loss[i] * 0.7 * fall;
-      }
-      out.push({ t, gain, harm });
-    }
-    return out;
-  }
-  sim.contributions = contributions;
-
-  function needOf(t, i, P, Nx) {
-    const b = t.base.need[i];
-    const healed = b * (1 - 0.72 * (1 - Math.exp(-P / 28)));
-    return CP.clamp(healed + Nx * 0.9, 0, 100);
-  }
-
-  function apply(p, sign) {
-    for (const c of p.contrib) {
-      for (let i = 0; i < ND; i++) {
-        c.t.P[i] += sign * c.gain[i];
-        c.t.Nx[i] += sign * c.harm[i];
-      }
-      refreshTract(c.t);
-    }
-  }
-  function refreshTract(t) {
-    let dsum = 0;
-    for (let i = 0; i < ND; i++) {
-      t.live.need[i] = needOf(t, i, Math.max(0, t.P[i]), Math.max(0, t.Nx[i]));
-      dsum += t.live.need[i] - t.base.need[i];
-    }
-    t.live.total = CP.clamp(t.base.total + dsum / ND, 0, 100);
-  }
-
-  // ---------- meters ----------
-  // A meter fills as equity-weighted need falls. GOAL = points of weighted reduction for a full bar.
-  CP.METER_GOAL = [1.2, 4.3, 3.6, 1.25, 1.85, 3.5];
-  function weightedGain(i, override) {
+  function refresh(d) {
     let s = 0;
-    for (const t of sim.tracts) {
-      const live = override && override.has(t) ? override.get(t)[i] : t.live.need[i];
-      s += t.w * (t.base.need[i] - live);
+    for (let i = 0; i < ND; i++) {
+      d.score[i] = CP.clamp(d.base[i] + d.add[i], 0, 100);
+      s += d.score[i];
     }
-    return s / wSum;
+    d.overall = s / ND;
   }
-  sim.meters = function (override) {
-    return CP.DOMAINS.map((_, i) => weightedGain(i, override) / CP.METER_GOAL[i]);
-  };
-
-  function gap(override) {
-    // mean total of the 20% neediest minus the 20% least needy tracts
-    const v = sim.tracts.map((t) => (override && override.has(t) ? override.get(t).total : t.live.total)).sort((a, b) => a - b);
-    const k = Math.floor(v.length * 0.2);
-    const lo = v.slice(0, k).reduce((a, b) => a + b, 0) / k;
-    const hi = v.slice(-k).reduce((a, b) => a + b, 0) / k;
-    return hi - lo;
+  for (const d of sim.districts) {
+    for (let i = 0; i < ND; i++) d.base[i] = d.tracts.reduce((a, t) => a + t.s[i], 0) / d.tracts.length;
+    refresh(d);
+    d.startScore = d.score.slice();
+    d.startOverall = d.overall;
   }
-  sim.gap = gap;
-  sim.baseGap = gap();
-  sim.quadAvg = function (q, base) {
-    const ts = sim.tracts.filter((t) => t.q === q);
-    return ts.reduce((a, t) => a + (base ? t.base.total : t.live.total), 0) / ts.length;
-  };
 
-  // what-if: meters after adding (or removing) a placement, without committing
-  sim.preview = function (p, removing) {
-    const contrib = removing ? p.contrib : contributions(p);
-    const sign = removing ? -1 : 1;
-    const over = new Map();
-    let best = null;
-    for (const c of contrib) {
-      const t = c.t;
-      const need = [];
-      let dsum = 0;
-      for (let i = 0; i < ND; i++) {
-        need[i] = needOf(t, i, Math.max(0, t.P[i] + sign * c.gain[i]), Math.max(0, t.Nx[i] + sign * c.harm[i]));
-        dsum += need[i] - t.base.need[i];
+  // ---------- district raster: fast lookups, label points and clean outlines ----------
+  // Tract outlines were simplified independently, so they don't share edges. Rasterising the
+  // districts on a 60 m grid and tracing that grid gives gap-free outlines for thick borders.
+  const G = 60;
+  const gx0 = D.bounds[0], gy0 = D.bounds[1];
+  const GW = Math.ceil((D.bounds[2] - gx0) / G), GH = Math.ceil((D.bounds[3] - gy0) / G);
+  const ids = new Int8Array(GW * GH).fill(-1);
+  for (let cy = 0; cy < GH; cy++)
+    for (let cx = 0; cx < GW; cx++) {
+      const t = sim.tractAt(gx0 + (cx + 0.5) * G, gy0 + (cy + 0.5) * G);
+      if (t) ids[cy * GW + cx] = t.d.id;
+    }
+  // close hairline gaps between neighbouring tracts
+  for (let pass = 0; pass < 2; pass++)
+    for (let cy = 1; cy < GH - 1; cy++)
+      for (let cx = 1; cx < GW - 1; cx++) {
+        const i = cy * GW + cx;
+        if (ids[i] >= 0) continue;
+        if (ids[i - 1] >= 0 && ids[i + 1] >= 0) ids[i] = ids[i - 1];
+        else if (ids[i - GW] >= 0 && ids[i + GW] >= 0) ids[i] = ids[i - GW];
       }
-      need.total = CP.clamp(t.base.total + dsum / ND, 0, 100);
-      over.set(t, need);
-      const dt = t.live.total - need.total;
-      if (!best || Math.abs(dt) > Math.abs(best.dt)) best = { t, dt };
+  const idAt = (cx, cy) => (cx < 0 || cy < 0 || cx >= GW || cy >= GH ? -1 : ids[cy * GW + cx]);
+  sim.districtAt = function (x, y) {
+    const k = idAt(Math.floor((x - gx0) / G), Math.floor((y - gy0) / G));
+    return k < 0 ? null : sim.districts[k];
+  };
+
+  // label point = the spot deepest inside each district (breadth-first distance from its border)
+  (function labelPoints() {
+    const dist = new Int16Array(GW * GH);
+    const queue = new Int32Array(GW * GH);
+    let head = 0, tail = 0;
+    for (let cy = 0; cy < GH; cy++)
+      for (let cx = 0; cx < GW; cx++) {
+        const i = cy * GW + cx, k = ids[i];
+        if (k < 0) continue;
+        if (idAt(cx - 1, cy) !== k || idAt(cx + 1, cy) !== k || idAt(cx, cy - 1) !== k || idAt(cx, cy + 1) !== k) {
+          dist[i] = 1;
+          queue[tail++] = i;
+        }
+      }
+    const best = sim.districts.map(() => [0, 0]);
+    while (head < tail) {
+      const i = queue[head++], k = ids[i], dv = dist[i];
+      if (dv > best[k][0]) best[k] = [dv, i];
+      const cx = i % GW;
+      const nb = [cx > 0 ? i - 1 : -1, cx < GW - 1 ? i + 1 : -1, i - GW, i + GW];
+      for (const j of nb) {
+        if (j < 0 || j >= ids.length || ids[j] !== k || dist[j]) continue;
+        dist[j] = dv + 1;
+        queue[tail++] = j;
+      }
     }
-    const before = sim.meters(), after = sim.meters(over);
-    return { delta: after.map((v, i) => v - before[i]), best, over, scoreDelta: sim.score(over).total - sim.score().total };
-  };
+    sim.districts.forEach((d, k) => {
+      const i = best[k][1];
+      d.label = [gx0 + ((i % GW) + 0.5) * G, gy0 + (Math.floor(i / GW) + 0.5) * G];
+      d.inradius = best[k][0] * G;
+    });
+  })();
 
-  // ---------- placements ----------
-  sim.on = (fn) => sim.listeners.push(fn);
-  const emit = (ev) => sim.listeners.forEach((fn) => fn(ev));
-
-  sim.canAfford = (cost) => sim.budget >= cost - 1e-6;
-
-  sim.place = function (kind, type, x, y, opts) {
-    const spec = kind === "zone" ? CP.ZONES[type] : CP.BUILDINGS[type];
-    if (!sim.canAfford(spec.cost)) return { ok: false, reason: "Not enough budget" };
-    const p = Object.assign({ id: sim.nextId++, kind, type, x, y, built: performance.now() }, opts || {});
-    p.contrib = contributions(p);
-    p.tract = sim.tractAt(x, y);
-    const before = sim.score().total;
-    apply(p, 1);
-    sim.placements.push(p);
-    sim.budget -= spec.cost;
-    sim.spent += spec.cost;
-    p.scoreDelta = sim.score().total - before;
-    emit({ type: "place", p });
-    return { ok: true, p };
-  };
-
-  sim.removeZoneAt = function (cx, cy) {
-    const z = sim.placements.find((p) => p.kind === "zone" && !p.removed && p.cx === cx && p.cy === cy);
-    if (z) {
-      apply(z, -1);
-      z.removed = true;
-    }
-    return z;
-  };
-
-  // destroy anything. Player builds refund 60%, existing city assets refund their salvage value.
-  sim.destroy = function (p) {
-    if (p.removed) return null;
-    const before = sim.score().total;
-    let refund;
-    if (p.kind === "building") {
-      apply(p, -1);
-      refund = CP.BUILDINGS[p.type].cost * 0.6;
-    } else if (p.kind === "zone") {
-      apply(p, -1);
-      refund = 0;
-    } else {
-      // existing amenity or landmark: removal creates harm
-      p.contrib = contributions(p);
-      apply(p, 1);
-      refund = p.kind === "landmark" ? p.spec.refund : CP.BUILDINGS[p.type].cost * 0.45;
-    }
-    p.removed = true;
-    sim.budget += refund;
-    const delta = sim.score().total - before;
-    emit({ type: "destroy", p, refund, delta });
-    return { refund, delta };
-  };
-
-  sim.previewDestroy = function (p) {
-    if (p.kind === "building" || p.kind === "zone") return sim.preview(p, true);
-    return sim.preview(Object.assign({}, p, { contrib: undefined }), false);
-  };
-
-  // ---------- existing city assets (destroyable) ----------
-  const SERVICE_TYPES = [
-    ["childcare", "proximity_childcare"],
-    ["grocery", "proximity_grocerystores"],
-    ["library", "proximity_library"],
-    ["pharmacy", "proximity_pharmacies"],
-    ["school", "proximity_primary_education"],
-  ];
-  const highs = {};
-  SERVICE_TYPES.forEach(([type, k]) => (highs[type] = pct(col(k), 0.8) || 0.01));
-  sim.tracts.forEach((t) => {
-    const rand = CP.rng(Math.round(t.c[0] * 7 + t.c[1] * 13));
-    SERVICE_TYPES.forEach(([type, k]) => {
-      const n = Math.min(3, Math.floor((t[k] / highs[type]) * 1.6 + rand() * 0.9));
-      for (let i = 0; i < n; i++) {
-        const [x, y] = sim.randomPointIn(t, rand);
-        sim.placements.push({ id: sim.nextId++, kind: "existing", type, x, y, tract: t, built: 0 });
+  // trace each district's outline from the grid, then smooth the staircase
+  (function outlines() {
+    const VW = GW + 1;
+    const maps = sim.districts.map(() => new Map());
+    const add = (k, ax, ay, bx, by) => {
+      const a = ay * VW + ax;
+      let l = maps[k].get(a);
+      if (!l) maps[k].set(a, (l = []));
+      l.push(by * VW + bx);
+    };
+    for (let cy = 0; cy < GH; cy++)
+      for (let cx = 0; cx < GW; cx++) {
+        const k = ids[cy * GW + cx];
+        if (k < 0) continue;
+        if (idAt(cx, cy - 1) !== k) add(k, cx, cy, cx + 1, cy);
+        if (idAt(cx + 1, cy) !== k) add(k, cx + 1, cy, cx + 1, cy + 1);
+        if (idAt(cx, cy + 1) !== k) add(k, cx + 1, cy + 1, cx, cy + 1);
+        if (idAt(cx - 1, cy) !== k) add(k, cx, cy + 1, cx, cy);
+      }
+    sim.districts.forEach((d, k) => {
+      const m = maps[k];
+      for (const [start, ends] of m) {
+        while (ends.length) {
+          const loop = [start];
+          let cur = ends.pop(), guard = 0;
+          while (cur !== start && guard++ < 1e6) {
+            loop.push(cur);
+            const l = m.get(cur);
+            if (!l || !l.length) break;
+            cur = l.pop();
+          }
+          if (loop.length < 10) continue; // ignore specks
+          // midpoints of the grid edges turn staircases into diagonals; one Chaikin pass rounds corners
+          const n = loop.length, mids = [];
+          for (let i = 0; i < n; i++) {
+            const a = loop[i], b = loop[(i + 1) % n];
+            mids.push([((a % VW) + (b % VW)) / 2, (Math.floor(a / VW) + Math.floor(b / VW)) / 2]);
+          }
+          const pts = [];
+          for (let i = 0; i < n; i++) {
+            const p = mids[i], q = mids[(i + 1) % n];
+            pts.push([gx0 + (0.75 * p[0] + 0.25 * q[0]) * G, gy0 + (0.75 * p[1] + 0.25 * q[1]) * G]);
+            pts.push([gx0 + (0.25 * p[0] + 0.75 * q[0]) * G, gy0 + (0.25 * p[1] + 0.75 * q[1]) * G]);
+          }
+          d.loops.push(pts);
+        }
       }
     });
-  });
+  })();
 
-  const LOSS = {
-    hospital: [3, 5, 16, 2, 2, 0],
-    library: [2, 4, 0, 5, 6, 0],
-    grocery: [2, 7, 4, 1, 1, 0],
-    belonging: [3, 0, 1, 9, 4, 0],
-    plain: [1, 0, 0, 4, 1, 0],
+  // ---------- scores ----------
+  sim.overall = () => sim.districts.reduce((a, d) => a + d.overall, 0) / sim.districts.length;
+  sim.metricAvg = (i) => sim.districts.reduce((a, d) => a + d.score[i], 0) / sim.districts.length;
+  sim.weakest = function (d) {
+    let m = 0;
+    for (let i = 1; i < ND; i++) if (d.score[i] < d.score[m]) m = i;
+    return m;
   };
-  CP.LANDMARKS.forEach((l) => {
-    const loss = LOSS[l.service] || (l.belonging ? LOSS.belonging : LOSS.plain);
-    const radius = l.service === "hospital" ? 7000 : l.belonging ? 6000 : 3500;
-    const refund = l.service === "hospital" ? 120 : Math.round(20 + l.h * 0.35);
-    l.placement = {
-      id: sim.nextId++, kind: "landmark", type: l.kind, x: l.pos[0], y: l.pos[1], landmark: l, built: 0,
-      spec: { radius, loss, refund, name: l.name },
-    };
-    sim.placements.push(l.placement);
-  });
+  // what district d's six scores would be after adding a building of this type
+  sim.after = (type, d) => d.score.map((v, i) => Math.min(100, v + CP.BUILDINGS[type].gain[i]));
 
-  // ---------- scoring ----------
-  sim.challengeBonus = 0;
-  sim.score = function (override) {
-    const m = sim.meters(override);
-    const capped = m.map((v) => Math.min(v, 1.25));
-    const meterPts = capped.reduce((a, v) => a + v * 1000, 0);
-    const balance = Math.max(0, Math.min(...capped)) * 1500; // reward optimising EVERY meter
-    const gapPts = (sim.baseGap - gap(override)) * 400;
-    const total = Math.round(meterPts + balance + gapPts + sim.challengeBonus + sim.budget * 0.5);
-    return { meters: m, meterPts, balance, gapPts, challenge: sim.challengeBonus, budget: sim.budget * 0.5, total };
+  // ---------- placing buildings ----------
+  sim.canAfford = (cost) => sim.budget >= cost - 1e-6;
+
+  sim.siteCheck = function (x, y) {
+    const d = sim.districtAt(x, y);
+    if (!d) return { ok: false, why: "Outside Calgary's city limits" };
+    if (CP.world.waterAt(x, y, 60)) return { ok: false, why: "You can't build on water", d };
+    for (const p of sim.buildings)
+      if (CP.dist(p.x, p.y, x, y) < CP.MIN_SPACING) return { ok: false, why: `Too close to the ${CP.BUILDINGS[p.type].name}. Spread buildings out.`, d };
+    return { ok: true, d };
   };
 
-  sim.active = (filter) => sim.placements.filter((p) => !p.removed && (!filter || filter(p)));
+  sim.place = function (type, x, y) {
+    const spec = CP.BUILDINGS[type];
+    const site = sim.siteCheck(x, y);
+    if (!site.ok) return { ok: false, why: site.why };
+    if (!sim.canAfford(spec.cost)) return { ok: false, why: "Not enough budget" };
+    const d = site.d;
+    const before = d.score.slice();
+    for (let i = 0; i < ND; i++) d.add[i] += spec.gain[i];
+    refresh(d);
+    const p = { id: sim.nextId++, type, x, y, d, built: performance.now() };
+    sim.buildings.push(p);
+    sim.budget -= spec.cost;
+    sim.spent += spec.cost;
+    return { ok: true, p, d, before, after: d.score.slice() };
+  };
+
+  // ---------- final score ----------
+  sim.finalScore = function () {
+    const equity = Math.round(sim.overall() * CP.FINAL.perEquityPoint);
+    const budget = Math.round(sim.budget * CP.FINAL.perBudgetM);
+    return { equity, budget, total: equity + budget };
+  };
 })();

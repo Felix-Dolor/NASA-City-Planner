@@ -1,172 +1,145 @@
-// Game tuning: domains, buildings, zones, overlays and data insights.
+// Game tuning: pacing, equity bands, metrics, buildings, districts, residents and story text.
+// Everything a designer would want to tweak lives in this file.
 (function () {
   const CP = window.CP;
 
-  CP.START_BUDGET = 900; // $M
-  CP.STAR_POINTS = 150; // per mission star
+  // ---------- pacing & economy ----------
+  CP.TERM_SECONDS = 480; // length of the term (8 minutes); pauses while the Deputy City Manager is talking
+  CP.START_BUDGET = 30; // $M - enough for 2-3 buildings
+  CP.INCOME = { amount: 1, every: 10 }; // small city revenue trickle: +$1M every 10 s (set amount to 0 to disable)
+  CP.MIN_SPACING = 1800; // metres between two player buildings ("spread buildings out")
+  CP.FINAL = { perEquityPoint: 100, perBudgetM: 2 }; // final score = equity * 100 + leftover $M * 2
+  CP.MISSIONS = {
+    total: 10, // contracts available over the whole term
+    active: 3, // shown at once
+    grantBase: 12, // $M
+    grantPerPoint: 0.7, // + $M per metric point the contract asks for
+    districtGrantPerPoint: 0.5, // same, for "raise the whole district" contracts (points summed over 6 metrics)
+  };
 
-  // Order matches CEI_DATA.domains. In the CEI a HIGHER score means MORE need / barriers.
+  // ---------- equity bands ----------
+  // Every score is 0-100 (higher = more equitable) but is only ever SHOWN as one of these bands.
+  CP.BANDS = [
+    { name: "Terrible", min: 0, color: "#e03131", ink: "#fff" },
+    { name: "Bad", min: 20, color: "#ff9a8d", ink: "#3a0d0a" },
+    { name: "Average", min: 40, color: "#f5d142", ink: "#3a2f00" },
+    { name: "Good", min: 60, color: "#3fa650", ink: "#fff" },
+    { name: "Perfect", min: 80, color: "#19f07a", ink: "#003a18" },
+  ];
+  CP.bandIndex = (s) => CP.clamp(Math.floor(s / 20), 0, 4);
+  CP.bandOf = (s) => CP.BANDS[CP.bandIndex(s)];
+  CP.chip = (s) => {
+    const b = CP.bandOf(s);
+    return `<span class="band" style="background:${b.color};color:${b.ink}">${b.name}</span>`;
+  };
+
+  // How raw CEI domain scores (higher = more need) become 0-100 equity scores:
+  // each tract is placed between Calgary's 5th and 95th percentile tract for that domain.
+  CP.SCORE_SCALE = { best: 90, span: 80, min: 5, max: 95 };
+
+  // ---------- the 6 equity metrics (order matches CEI_DATA.domains) ----------
   CP.DOMAINS = [
-    { key: "econ", label: "Economic Opportunity", short: "Economy", icon: "💼", color: "#f5b942" },
-    { key: "access", label: "Accessibility & Amenities", short: "Access", icon: "🚏", color: "#46b8f0" },
-    { key: "health", label: "Population Health", short: "Health", icon: "❤️", color: "#f25f7a" },
-    { key: "belong", label: "Belonging & Safety", short: "Belonging", icon: "🤝", color: "#b28cff" },
-    { key: "social", label: "Human & Social Wellbeing", short: "Wellbeing", icon: "🌱", color: "#58d68d" },
-    { key: "climate", label: "Climate & Environment", short: "Climate", icon: "🌳", color: "#2ec4a6" },
+    { key: "econ", label: "Economic Opportunity", icon: "💼", color: "#f5b942",
+      plain: "Can people here find good jobs and earn enough to live on? This looks at work, incomes and poverty." },
+    { key: "access", label: "Accessibility & Amenities", icon: "🚏", color: "#46b8f0",
+      plain: "How easy is it to reach everyday things like groceries, schools, childcare and transit without a long trip?" },
+    { key: "health", label: "Population Health", icon: "❤️", color: "#f25f7a",
+      plain: "How healthy are the people who live here, and can they see a doctor when they need one?" },
+    { key: "belong", label: "Belonging & Safety", icon: "🤝", color: "#b28cff",
+      plain: "Do people feel safe, welcome and connected to their neighbours?" },
+    { key: "social", label: "Human & Social Wellbeing", icon: "🌱", color: "#58d68d",
+      plain: "Are people getting the education, housing and support they need to do well in life?" },
+    { key: "climate", label: "Climate & Environment", icon: "🌳", color: "#2ec4a6",
+      plain: "Trees, parks and clean air, and how well the area copes with heat, noise and floods." },
   ];
   const E = (econ, access, health, belong, social, climate) => [econ, access, health, belong, social, climate];
 
-  // effects: domain "points" applied to every tract inside `radius` (linear falloff),
-  // multiplied by rel(t) - how much that tract actually lacks this service (0..~1.3).
-  // Negative effects are real costs (noise, land, churn) and are NOT scaled by rel.
+  // ---------- buildings ----------
+  // gain: equity points added to each metric of the district the building stands in.
+  // 20 points = one full band. Scores cap at 100, so building where a metric is already high is wasted.
   CP.BUILDINGS = {
-    childcare: {
-      name: "Childcare Centre", icon: "🧸", cost: 6, radius: 1600, color: "#ff9fd0", h: 8, key: "1",
-      gain: E(5, 6, 0, 1, 5, 0), cost_fx: E(0, 0, 0, 0, 0, 0),
-      rel: (n) => 0.55 * n.lackChildcare + 0.65 * n.children,
-      why: "Parents (often women) can return to work; kids get an early start. Best where there are many children and few spaces.",
-    },
-    grocery: {
-      name: "Grocery Store", icon: "🛒", cost: 12, radius: 1800, color: "#7ed957", h: 9, key: "2",
-      gain: E(2, 8, 5, 1, 1, 0), cost_fx: E(0, 0, 0, 0, 0, 0.5),
-      rel: (n) => 0.65 * n.lackGrocery + 0.45 * n.poverty,
-      why: "Fixes food deserts. Fresh food lowers diabetes risk. Best where proximity to groceries is low and poverty is high.",
-    },
-    library: {
-      name: "Library", icon: "📚", cost: 22, radius: 2600, color: "#ffd166", h: 12, key: "3",
-      gain: E(3, 5, 0, 6, 7, 0), cost_fx: E(0, 0, 0, 0, 0, 0),
-      rel: (n) => 0.45 * n.lackLibrary + 0.35 * n.noCert + 0.35 * n.lowVote,
-      why: "Free space, internet, newcomer and literacy programs. Tracts with low voter turnout and many adults without a diploma gain the most.",
-    },
-    pharmacy: {
-      name: "Pharmacy", icon: "💊", cost: 4, radius: 1400, color: "#6ee7f9", h: 7, key: "4",
-      gain: E(0, 4, 6, 0, 1, 0), cost_fx: E(0, 0, 0, 0, 0, 0),
-      rel: (n) => 0.55 * n.lackPharmacy + 0.5 * n.diabetes,
-      why: "Medication access for chronic illness. Diabetes is 0.87 correlated with overall need.",
-    },
-    school: {
-      name: "School", icon: "🏫", cost: 38, radius: 2400, color: "#f4a261", h: 12, key: "5",
-      gain: E(6, 5, 1, 3, 8, 0), cost_fx: E(0, 0, 0, 0, 0, 0.5),
-      rel: (n) => 0.35 * n.lackSchool + 0.45 * n.children + 0.35 * n.noCert,
-      why: "No-certificate rate is the single indicator most tied to need (0.91). New suburbs with lots of kids also lack schools.",
-    },
-    clinic: {
-      name: "Health Clinic", icon: "🩺", cost: 14, radius: 2200, color: "#ff8fa3", h: 9, key: "6",
-      gain: E(1, 3, 8, 1, 1, 0), cost_fx: E(0, 0, 0, 0, 0, 0),
-      rel: (n) => n.healthGap,
-      why: "Gives people a regular care provider. Cheaper than a hospital but smaller reach.",
-    },
-    hospital: {
-      name: "Hospital", icon: "🏥", cost: 180, radius: 6500, color: "#ff5c7a", h: 34, key: "7", big: true,
-      gain: E(4, 6, 17, 2, 2, 0), cost_fx: E(0, 0, 0, 1, 0, 1.5),
-      rel: (n) => n.healthGap,
-      why: "Huge reach - but costly, and sirens add noise. Put it where proximity to healthcare is low AND few people have a regular provider.",
-    },
-    transit: {
-      name: "CTrain Station", icon: "🚉", cost: 45, radius: 1700, color: "#4dabf7", h: 8, key: "8",
-      gain: E(6, 9, 0, 0, 2, 3), cost_fx: E(0, 0, 0, 1.5, 0, 1),
-      rel: (n) => 0.6 * n.lowTransit + 0.5 * n.longCommute + 0.2 * n.poverty,
-      why: "Cuts commute times and car dependence. Adds noise and churn near the platform.",
-    },
-    community: {
-      name: "Community Centre", icon: "🤝", cost: 10, radius: 2000, color: "#c39bff", h: 9, key: "9",
-      gain: E(1, 2, 2, 8, 5, 0), cost_fx: E(0, 0, 0, 0, 0, 0),
-      rel: (n) => 0.55 * n.lowVote + 0.5 * n.lowBelonging + 0.2 * n.churn,
-      why: "Voter turnout is the strongest 'good' signal in the data (-0.76 with need). Gathering spaces build it.",
-    },
-    park: {
-      name: "Park", icon: "⛲", cost: 5, radius: 1100, color: "#52c27a", h: 0, key: "P",
-      gain: E(0, 2, 4, 3, 2, 7), cost_fx: E(1, 0, 0, 0, 0, 0),
-      rel: (n) => 0.6 * n.lackPark + 0.4 * n.heat + 0.2 * n.lackParkProx,
-      why: "Cools heat islands and gives dense areas breathing room. One Beltline tract has 0% park area. Costs a bit of developable land.",
-    },
-    trees: {
-      name: "Plant Trees", icon: "🌳", cost: 0.4, radius: 700, color: "#2f9e44", h: 0, key: "T", brush: true,
-      gain: E(0, 0, 1.5, 0.5, 0, 5), cost_fx: E(0, 0, 0, 0, 0, 0),
-      rel: (n) => 0.7 * n.lowCanopy + 0.45 * n.heat,
-      why: "Canopy follows money and age: new suburbs sit under 0.5%, Glenmore Park has 37.6%. Plant where it is hot and bare.",
-    },
+    clinic: { name: "Health Clinic", icon: "🩺", cost: 12, color: "#19b5b0", gain: E(0, 6, 30, 0, 0, 0) },
+    grocery: { name: "Grocery Store", icon: "🛒", cost: 10, color: "#3faa4a", gain: E(0, 26, 10, 0, 0, 0) },
+    jobs: { name: "Jobs Hub", icon: "💼", cost: 14, color: "#3b82c4", gain: E(32, 0, 0, 0, 8, 0) },
+    community: { name: "Community Centre", icon: "🤝", cost: 10, color: "#845ef7", gain: E(0, 0, 0, 30, 8, 0) },
+    school: { name: "School", icon: "🏫", cost: 16, color: "#d9774a", gain: E(12, 0, 0, 6, 30, 0) },
+    park: { name: "Park", icon: "⛲", cost: 10, color: "#58b368", gain: E(0, 0, 8, 6, 0, 30) },
+    childcare: { name: "Childcare Centre", icon: "🧸", cost: 8, color: "#ff7ab8", gain: E(14, 0, 0, 0, 14, 0) },
+    library: { name: "Library", icon: "📚", cost: 12, color: "#c98a1b", gain: E(0, 0, 0, 16, 20, 0) },
+    transit: { name: "CTrain Station", icon: "🚉", cost: 18, color: "#1c6fd9", gain: E(16, 32, 0, 0, 0, 8) },
+    hospital: { name: "Hospital", icon: "🏥", cost: 30, color: "#e53935", gain: E(10, 15, 55, 0, 0, 0) },
   };
 
-  // Zones are painted on the 250 m planning grid.
-  CP.ZONE_CELL = 250;
-  CP.ZONES = {
-    dense: {
-      name: "Dense Residential", icon: "🏢", cost: 1.5, color: "#ff7b54", key: "Z",
-      gain: E(2, 5, 0, 0, 0, 1), cost_fx: E(0, 0, 0.5, 2, 1.5, 2),
-      rel: (n) => 0.5 + 0.6 * n.transit,
-      penalty: (n) => 0.6 + 1.2 * n.children,
-      why: "Density buys walkability and transit, but costs noise, park space and families. Walkable tracts have few kids (-0.47).",
-    },
-    suburban: {
-      name: "Suburban Residential", icon: "🏡", cost: 1, color: "#ffd93d", key: "X",
-      gain: E(0, 0, 1, 3, 2.5, 0), cost_fx: E(0, 3, 0, 0, 0, 2),
-      rel: (n) => 0.5 + 0.6 * n.children,
-      penalty: (n) => 0.6 + 0.8 * n.carDependent,
-      why: "Suburbs buy space and children, but cost commute time and car dependence (walkability vs driving: -0.67).",
-    },
-    commercial: {
-      name: "Commercial", icon: "🏬", cost: 2, color: "#4dabf7", key: "C",
-      gain: E(5, 2, 0, 0, 0.5, 0), cost_fx: E(0, 0, 0, 1, 0, 1),
-      rel: (n) => 0.5 + 0.7 * n.unemployment,
-      penalty: () => 1,
-      why: "Local jobs and shops. Some traffic, and more transient foot traffic.",
-    },
-    industrial: {
-      name: "Industrial", icon: "🏭", cost: 2.5, color: "#a0a0b0", key: "I",
-      gain: E(8, 0, 0, 0, 0.5, 0), cost_fx: E(0, 0, 3, 1, 0, 5),
-      rel: (n) => 0.5 + 0.7 * n.unemployment,
-      penalty: (n) => 0.7 + 0.6 * n.heat,
-      why: "Big employment boost, but heat, noise and pollution land on whoever lives next door.",
-    },
+  // ---------- districts ----------
+  // Calgary's 288 census tracts are grouped into 12 districts: each tract joins the nearest seed point.
+  // Each district has one representative resident with a unique look (see sprites.js -> S.resident).
+  const L = (skin, hair, style, top, bottom, extra) => ({ skin, hair, style, top, bottom, extra: extra || {} });
+  CP.DISTRICTS = [
+    { name: "Downtown", at: [51.045, -114.075], resident: { name: "Priya Sharma", look: L("#c68642", "#1b1b1f", "long", "#c2255c", "#1f2a44", { glasses: true }) } },
+    { name: "Forest Lawn", at: [51.03, -113.965], resident: { name: "Amira Hassan", look: L("#d9a066", "#0f8a8a", "hijab", "#e0a526", "#5b5f66", {}) } },
+    { name: "Marlborough", at: [51.07, -113.965], resident: { name: "Minh Tran", look: L("#f1c27d", "#15151a", "short", "#d6336c", "#2b4c7e", { backpack: "#2f9e44", hood: true }) } },
+    { name: "Saddle Ridge", at: [51.125, -113.95], resident: { name: "Harpreet Gill", look: L("#b9773f", "#f08c00", "turban", "#1971c2", "#c9b28a", { beard: "#2a2a2a" }) } },
+    { name: "Thorncliffe", at: [51.095, -114.065], resident: { name: "Rosa Delgado", look: L("#d4a373", "#6b3f1d", "curly", "#f8f9fa", "#7a4a2a", { apron: "#2f9e44" }) } },
+    { name: "Country Hills", at: [51.15, -114.08], resident: { name: "Kwame Mensah", look: L("#6b4226", "#141414", "afro", "#fcc419", "#1b1b1f", { headphones: "#e03131" }) } },
+    { name: "Bowness", at: [51.105, -114.21], resident: { name: "Tom Fraser", look: L("#f3cfb3", "#e9ecef", "cowboy", "#a61e4d", "#33507a", { plaid: "#3b1f16", cane: true, beard: "#e9ecef" }) } },
+    { name: "Varsity", at: [51.085, -114.135], resident: { name: "Mei Lin Wong", look: L("#f6d5b0", "#20151a", "bun", "#b197fc", "#f1f3f5", { scarf: "#ff922b", book: "#1c7ed6" }) } },
+    { name: "Signal Hill", at: [51.03, -114.17], resident: { name: "Sofia Petrov", look: L("#fbdcc4", "#f2c94c", "ponytail", "#4dabf7", "#4dabf7", { stripe: "#ffffff" }) } },
+    { name: "Glenmore", at: [50.975, -114.1], resident: { name: "Elena Kowalski", look: L("#eec9a8", "#adb5bd", "bob", "#7048e8", "#2b8a3e", { glasses: true, bag: "#8d5524" }) } },
+    { name: "Midnapore", at: [50.915, -114.08], resident: { name: "Ahmed Yusuf", look: L("#8d5524", "#1c3d6e", "cap", "#868e96", "#343a40", { vest: "#ff922b", beard: "#1b1b1f" }) } },
+    { name: "McKenzie Towne", at: [50.92, -113.97], resident: { name: "Chloe Tremblay", look: L("#ffe0c7", "#e03131", "toque", "#f783ac", "#0ca678", { small: true, mitts: "#e03131" }) } },
+  ];
+
+  // What a resident says about their district's weakest metric (two variants each), and how they say thanks.
+  CP.NEED_LINES = [
+    ["There's no steady work around here. I ride two hours for a part-time shift.", "Our young people have to leave the neighbourhood to find a decent job."],
+    ["The nearest grocery store is three bus transfers away.", "Without a car, you can't get anywhere from here."],
+    ["We need a clinic nearby. The closest doctor is 40 minutes away.", "My mother waited all night in emergency. We need care closer to home."],
+    ["I barely know my neighbours, and I don't feel safe walking home at night.", "There's nowhere around here for people to come together."],
+    ["Our kids need a real place to learn. The classrooms are overflowing.", "Families here are stretched thin. We need support, not sympathy."],
+    ["There isn't a single tree on my street. Summers here are scorching.", "The kids have no park to play in, only parking lots."],
+  ];
+  CP.THANKS_LINES = [
+    "I start my new job on Monday, ten minutes from home. Thank you, Director!",
+    "I can finally get what I need close to home. That changes everything. Thank you!",
+    "I saw a doctor today, right here in the neighbourhood. Thank you, Director!",
+    "The whole street came out last night. It finally feels like a community. Thank you!",
+    "My daughter loves her new classroom. You gave us a real chance. Thank you!",
+    "Shade, grass and birdsong. I never thought I'd see that here. Thank you!",
+  ];
+  CP.CONTENT_LINE = "Life feels fair here now. Go and help the other districts, Director!";
+
+  // ---------- story ----------
+  CP.STORY = {
+    dcm: { name: "Maya Okonkwo", title: "Deputy City Manager · City of Calgary" },
+    introDistrict: "Forest Lawn",
+    introVisitor: "Marlborough",
+    // who: 0 = the district's own resident, 1 = the visitor
+    intro: [
+      { who: 0, text: "Another clinic closed. The nearest doctor is across the city now." },
+      { who: 1, text: "Out west they have parks, libraries and trains. We have a bus that never comes." },
+      { who: 0, text: "Same city, completely different lives. It isn't fair." },
+      { who: 1, text: "We're not asking for favours. We just want Calgary to be equitable." },
+      { who: 0, text: "Somebody up there must be able to see it..." },
+    ],
+    briefing: [
+      "Director, this is Deputy City Manager Maya Okonkwo at City Hall. The planning satellite CEI-SAT 1 is now under your command.",
+      "You heard them down there. Your job is simple to say and hard to do: make Calgary the most equitable city on the planet.",
+      "Your term lasts 8 minutes. Your starting budget is small, only $30M. That buys two or three buildings.",
+      "Complete missions to earn grants. Use BUILD to place buildings, PLAN to see where life is least fair, and MISSIONS to see your contracts. Good luck, Director.",
+    ],
+    missionDone: [
+      'Contract complete: "{title}". A grant of {grant} has been wired to your budget.',
+      'Well done, Director. You finished "{title}", and {grant} in grant money is now yours to spend.',
+      'City Hall is impressed. "{title}" is complete, so I have released a {grant} grant.',
+    ],
+    allMissionsDone: "That was the last contract I had for you, Director. Keep building until your term ends.",
+    // closing line of the final report, by overall band (Terrible .. Perfect)
+    report: [
+      "Director, your term is over. I'll be blunt: Calgary is still a deeply unfair city. The residents deserved better.",
+      "Director, your term is over. A few districts are better off, but most of Calgary is still waiting for its fair share.",
+      "Director, your term is over. Calgary is fairer than you found it, but 'average' is not what we promised people.",
+      "Director, your term is over. Calgary is now one of the most equitable cities anywhere. People can feel the difference.",
+      "Director, your term is over, and you did it. Calgary is the most equitable city on the planet. City Hall salutes you.",
+    ],
   };
-
-  // Overlay layers. `fn(t)` returns a value, `good` = higher is better (colour inverted).
-  const f = (k) => (t) => t[k];
-  CP.OVERLAYS = [
-    { id: "total", group: "Equity Index", label: "Total Equity Score (need)", fn: (t) => t.live.total, min: 15, max: 80, unit: "" },
-    { id: "d0", group: "Equity Index", label: "Economic Opportunity need", fn: (t) => t.live.need[0], min: 0, max: 100 },
-    { id: "d1", group: "Equity Index", label: "Accessibility need", fn: (t) => t.live.need[1], min: 0, max: 100 },
-    { id: "d2", group: "Equity Index", label: "Population Health need", fn: (t) => t.live.need[2], min: 0, max: 100 },
-    { id: "d3", group: "Equity Index", label: "Belonging & Safety need", fn: (t) => t.live.need[3], min: 0, max: 100 },
-    { id: "d4", group: "Equity Index", label: "Social Wellbeing need", fn: (t) => t.live.need[4], min: 0, max: 100 },
-    { id: "d5", group: "Equity Index", label: "Climate & Environment need", fn: (t) => t.live.need[5], min: 0, max: 100 },
-    { id: "impact", group: "Equity Index", label: "Your impact (change in total)", fn: (t) => t.base.total - t.live.total, min: -4, max: 4, diverging: true },
-    { id: "healthGap", group: "Health", label: "Healthcare gap (challenge)", fn: (t) => t.n.healthGap * 100, min: 0, max: 100, unit: "" },
-    { id: "proximity_healthcare", group: "Health", label: "Proximity to healthcare", fn: f("proximity_healthcare"), min: 0, max: 0.3, good: true },
-    { id: "regular_care_provider_yes_perc", group: "Health", label: "Has regular care provider %", fn: f("regular_care_provider_yes_perc"), min: 68, max: 100, good: true, unit: "%" },
-    { id: "diabetes_agestd_perc", group: "Health", label: "Diabetes prevalence %", fn: f("diabetes_agestd_perc"), min: 3, max: 12, unit: "%" },
-    { id: "tree_canopy", group: "Environment", label: "Tree canopy %", fn: f("tree_canopy"), min: 0, max: 30, good: true, unit: "%" },
-    { id: "land_surface_temp", group: "Environment", label: "Land surface temperature", fn: f("land_surface_temp"), min: 22, max: 28.6, unit: "°C" },
-    { id: "park_area_perc", group: "Environment", label: "Park area %", fn: f("park_area_perc"), min: 0, max: 30, good: true, unit: "%" },
-    { id: "noise_pollution_score", group: "Environment", label: "Noise pollution", fn: f("noise_pollution_score"), min: 2, max: 20 },
-    { id: "proximity_grocerystores", group: "Amenities", label: "Proximity to grocery", fn: f("proximity_grocerystores"), min: 0, max: 0.2, good: true },
-    { id: "proximity_childcare", group: "Amenities", label: "Proximity to childcare", fn: f("proximity_childcare"), min: 0, max: 0.5, good: true },
-    { id: "proximity_library", group: "Amenities", label: "Proximity to library", fn: f("proximity_library"), min: 0, max: 0.15, good: true },
-    { id: "proximity_pharmacies", group: "Amenities", label: "Proximity to pharmacies", fn: f("proximity_pharmacies"), min: 0, max: 0.12, good: true },
-    { id: "proximity_primary_education", group: "Amenities", label: "Proximity to schools", fn: f("proximity_primary_education"), min: 0, max: 0.25, good: true },
-    { id: "average_walkscore", group: "Mobility", label: "Walk Score", fn: f("average_walkscore"), min: 0, max: 100, good: true },
-    { id: "average_transitscore", group: "Mobility", label: "Transit Score", fn: f("average_transitscore"), min: 20, max: 85, good: true },
-    { id: "average_commute_time", group: "Mobility", label: "Commute time (min)", fn: f("average_commute_time"), min: 18, max: 32, unit: " min" },
-    { id: "children_perc", group: "People", label: "Children (0-14) %", fn: f("children_perc"), min: 3, max: 30, neutral: true, unit: "%" },
-    { id: "seniors_65_perc", group: "People", label: "Seniors (65+) %", fn: f("seniors_65_perc"), min: 2, max: 35, neutral: true, unit: "%" },
-    { id: "voter_turnout_rate", group: "People", label: "Voter turnout %", fn: f("voter_turnout_rate"), min: 23, max: 62, good: true, unit: "%" },
-    { id: "educ_no_cert_perc", group: "People", label: "No certificate/diploma %", fn: f("educ_no_cert_perc"), min: 2, max: 25, unit: "%" },
-    { id: "population_in_poverty_perc", group: "People", label: "Population in poverty %", fn: f("population_in_poverty_perc"), min: 2, max: 25, unit: "%" },
-    { id: "renter_households_perc", group: "People", label: "Renter households %", fn: f("renter_households_perc"), min: 0, max: 90, neutral: true, unit: "%" },
-    { id: "person_crime_rate", group: "People", label: "Person crime rate", fn: f("person_crime_rate"), min: 0, max: 1500 },
-  ];
-
-  CP.INSIGHTS = [
-    { title: "The spread is huge", text: "Total equity scores run from 16.8 (Elbow Park / Upper Mount Royal) to 78.1 (Forest Lawn), with a median of 39.3.", overlay: "total" },
-    { title: "Quadrants are unequal", text: "The NE averages 54.5 against 36.6 in the SW. The NE also has the least tree canopy (7% vs 15.5%) and the lowest voter turnout (38% vs 48%).", overlay: "total" },
-    { title: "Walkability isn't equity", text: "Walk score barely tracks equity (correlation 0.08). The Beltline scores 98 and Alpine Park scores 1, yet both sit mid-table.", overlay: "average_walkscore" },
-    { title: "Walkable areas have few kids", text: "Correlation -0.47. Beltline tracts are 4-5% children; Auburn Bay is up to 34.5%.", overlay: "children_perc" },
-    { title: "Trees follow money and age", text: "Canopy tracks income inequality (0.58) and seniors (0.53). Cornerstone and Carrington are under 0.5%; Glenmore Park / Oakridge is 37.6%.", overlay: "tree_canopy" },
-    { title: "Rich areas are internally unequal", text: "Upper Mount Royal has the highest income inequality ratio (13.7) but one of the best overall scores.", overlay: "total" },
-    { title: "Voting is the strongest good signal", text: "Voter turnout correlates -0.76 with overall need. It ranges from 23% in Penbrooke Meadows to 62% in Lakeview.", overlay: "voter_turnout_rate" },
-    { title: "Education and health move with need", text: "Adults with no certificate (0.91) and diabetes rate (0.87) are the indicators most tied to the overall score.", overlay: "educ_no_cert_perc" },
-    { title: "Downtown is a trade-off", text: "The core has the best transit (score 82, up to 30% transit commuting) but also the most noise, the fewest parks (0% in one Beltline tract) and the highest crime rates.", overlay: "noise_pollution_score" },
-    { title: "Renting means churn", text: "Renter share and 'moved in the last year' correlate at 0.71. Beltline tracts turn over about a third of residents a year.", overlay: "renter_households_perc" },
-  ];
 })();
