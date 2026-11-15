@@ -162,6 +162,15 @@
     const near = CP.clamp((z - 0.1) / 0.25, 0, 1); // 0 from orbit, 1 close to the ground
     const map = CP.clamp((z - 0.008) / 0.006, 0, 1); // map furniture fades in as the city fills the view
 
+    // far away: every district in its own colour. Close up: a faint wash stays so you can still tell them apart.
+    if (map > 0 && R.overlayMetric === null) {
+      const a = (0.14 + CP.clamp((0.09 - z) / 0.05, 0, 1) * 0.46) * map; // never fully gone up close
+      if (a > 0.01) {
+        ctx.globalAlpha = a;
+        for (const d of sim.districts) { ctx.fillStyle = d.tint; ctx.fill(d.path, "evenodd"); }
+        ctx.globalAlpha = 1;
+      }
+    }
     // Plan view: each district filled with the band colour of the chosen metric
     if (R.overlayMetric !== null && map > 0) {
       ctx.globalAlpha = 0.6 * map;
@@ -187,18 +196,15 @@
         ctx.fillStyle = "rgba(8,12,30,0.38)";
         for (const d of sim.districts) if (d !== R.focus) ctx.fill(d.path, "evenodd");
       }
-      // thick district borders: dark casing + each district's own colour, drawn on its side of the line
+      // thick district borders: dark casing + the district's own colour (Plan view: its band colour), constant width on screen
       ctx.lineJoin = "round";
-      ctx.strokeStyle = "rgba(6,10,28,0.9)";
-      ctx.lineWidth = 9 / z;
-      for (const d of sim.districts) ctx.stroke(d.path);
+      ctx.strokeStyle = "rgba(6,10,28,0.85)";
       ctx.lineWidth = 7 / z;
+      for (const d of sim.districts) ctx.stroke(d.path);
+      ctx.lineWidth = 3.4 / z;
       for (const d of sim.districts) {
-        ctx.save();
-        ctx.clip(d.path, "evenodd");
-        ctx.strokeStyle = d.color;
+        ctx.strokeStyle = R.overlayMetric !== null ? CP.bandOf(d.score[R.overlayMetric]).color : d.color;
         ctx.stroke(d.path);
-        ctx.restore();
       }
       ctx.globalAlpha = 1;
     }
@@ -410,6 +416,30 @@
   }
   const inCircles = (cs, x, y) => cs.some(([cx, cy, r2]) => (x - cx) * (x - cx) + (y - cy) * (y - cy) <= r2);
 
+  // Landmark size multiplier (x real size). Far away they are blown up (world.LM_SCALE) so they stand out on the city
+  // map. Zooming in, their size on screen holds steady until each one is down to a cap that keeps its footprint
+  // clear of its nearest neighbouring landmark, so up close they never overlap; after that they grow with the zoom.
+  const LM_NEAR_MAX = 4; // never more than 4x real size up close
+  const LM_HOLD_Z = 0.016; // about the whole-city view: from here in, on-screen size stops shrinking with zoom
+  let lmCaps = null;
+  function landmarkCaps() {
+    lmCaps = new Map();
+    const rad = (l) => world.LM_CLEAR[l.kind] || 50;
+    for (const a of CP.LANDMARKS) {
+      let cap = LM_NEAR_MAX;
+      for (const b of CP.LANDMARKS) {
+        if (a === b) continue;
+        cap = Math.min(cap, (0.9 * CP.dist(a.pos[0], a.pos[1], b.pos[0], b.pos[1])) / (rad(a) + rad(b)));
+      }
+      lmCaps.set(a, Math.max(0.6, cap));
+    }
+  }
+  R.lmScale = function (l, z) {
+    if (!lmCaps) landmarkCaps();
+    const far = world.LM_SCALE, near = Math.min(far, lmCaps.get(l) || 1);
+    return CP.clamp((far * LM_HOLD_Z) / z, near, far);
+  };
+
   // everything that stands on the map, sorted back to front
   function drawObjects(t, alpha) {
     const z = R.cam.z;
@@ -435,6 +465,8 @@
 
     ctx.globalAlpha = alpha;
     const kA = z * 8, kB = S.buildScale(z), uR = S.residentScale(z);
+    lights.length = 0;
+    const night = R.daylight().dark > 0.03;
     const now = performance.now();
     const sad = [];
     for (const it of items) {
@@ -451,6 +483,7 @@
           sad.push([sx, sy - (it.h || 14) * kA * 0.8 - 22 * kA]);
         }
         S.ambient(ctx, it, sx, sy, kA);
+        if (night && it.kind !== "park") lights.push(sx, sy - (it.h || 14) * kA * 0.5, 30 * kA);
       } else if (it.type === "lm") {
         const [lx, ly] = R.toScreen(it.l.pos[0], it.l.pos[1]);
         if (it.l.building) {
@@ -459,7 +492,9 @@
           p.flat(-62, -62, 0, 124, 124, CP.hexA(CP.BUILDINGS[it.l.service].color, 0.35), true);
           ctx.strokeStyle = CP.BUILDINGS[it.l.service].color; ctx.lineWidth = 2.5; ctx.stroke();
         }
-        S.landmark(ctx, it.l, lx, ly, z * world.LM_SCALE, t);
+        const k = z * R.lmScale(it.l, z);
+        S.landmark(ctx, it.l, lx, ly, k, t);
+        if (night) lights.push(lx, ly - 30 * k, 90 * k);
       } else if (it.type === "bld") {
         const grow = CP.smooth(CP.clamp((now - it.p.built) / 600, 0, 1));
         ctx.save();
@@ -467,8 +502,10 @@
         ctx.scale(1, 0.15 + 0.85 * grow);
         S.building(ctx, it.p.type, 0, 0, kB, t);
         ctx.restore();
+        if (night) lights.push(sx, sy - 40 * kB, 110 * kB);
       } else if (it.type === "lothouse") {
         S.lot(ctx, it.lot, sx, sy, kB, { housesOnly: true });
+        if (night) lights.push(sx, sy - 20 * kB, 80 * kB);
       } else if (it.type === "prop") {
         if (it.p.kind === "house") S.ambient(ctx, it.p.it, sx, sy, z * 7);
         else if (it.p.kind === "tree") S.tree(ctx, sx, sy, it.p.s, it.p.hue, z);
@@ -611,11 +648,11 @@
     ctx.fillText(icon, sx, sy + 0.5);
   }
 
-  function label(text, sx, sy, dot, sym, color) {
+  function label(text, sx, sy, dot, sym, edge) {
     const w = ctx.measureText(text).width + 14 + (dot ? 18 : 0);
     ctx.fillStyle = "rgba(8,12,30,0.86)";
     ctx.beginPath(); ctx.roundRect(sx - w / 2, sy - 11, w, 22, 11); ctx.fill();
-    if (color) { ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke(); }
+    if (edge) { ctx.strokeStyle = edge; ctx.lineWidth = 2.5; ctx.stroke(); }
     if (dot) {
       ctx.fillStyle = dot;
       ctx.beginPath(); ctx.arc(sx - w / 2 + 12, sy, 7, 0, 7); ctx.fill();
@@ -626,7 +663,7 @@
         ctx.font = "700 12px Inter, system-ui, sans-serif";
       }
     }
-    ctx.fillStyle = color || "#e8f1ff";
+    ctx.fillStyle = "#e8f1ff";
     ctx.textBaseline = "middle";
     ctx.fillText(text, sx + (dot ? 9 : 0), sy);
   }
@@ -641,7 +678,7 @@
       const [sx, sy] = R.toScreen(d.label[0], d.label[1]);
       if (sx < -80 || sx > W + 80 || sy < -40 || sy > H + 40) continue;
       if (d === R.focus) continue; // its name is on the profile card
-      const ov = R.overlayMetric !== null ? CP.bandOf(d.score[R.overlayMetric]) : null;
+      const ov = CP.bandOf(R.overlayMetric !== null ? d.score[R.overlayMetric] : d.overall);
       label(d.name, sx, sy + 16, ov ? ov.color : null, ov ? ov.sym : null, d.color);
     }
     // mission pins
@@ -666,16 +703,50 @@
     ctx.globalAlpha = 1;
   }
 
-  // dawn -> bright day -> dusk over the term
+  // One full day over the term: it starts at 7 AM, runs through noon, dusk and night, and ends at the next 7 AM.
+  const DAY_START = 7; // clock hour when the term begins
+  R.daylight = function () {
+    if (R.dayFrac === null) return { hour: DAY_START, dark: 0, warm: 0 };
+    const hour = (DAY_START + 24 * CP.clamp(R.dayFrac, 0, 1)) % 24;
+    const sun = Math.sin((2 * Math.PI * (hour - 6)) / 24); // 1 at noon, -1 at midnight
+    return {
+      hour,
+      dark: CP.smooth(CP.clamp((0.12 - sun) / 0.45, 0, 1)), // 0 by day, 1 deep in the night
+      warm: CP.clamp(1 - Math.abs(sun + 0.04) / 0.28, 0, 1), // golden light around sunrise / sunset
+    };
+  };
+  const lights = []; // [sx, sy, radius, ...] screen-space window glows gathered by drawObjects
+  let glow = null;
+  function glowSprite() {
+    glow = document.createElement("canvas");
+    glow.width = glow.height = 64;
+    const g = glow.getContext("2d");
+    const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gr.addColorStop(0, "rgba(255,214,140,0.9)");
+    gr.addColorStop(0.35, "rgba(255,170,80,0.35)");
+    gr.addColorStop(1, "rgba(255,150,60,0)");
+    g.fillStyle = gr;
+    g.fillRect(0, 0, 64, 64);
+  }
   function drawDaylight(pcx, pcy, pr) {
-    if (R.dayFrac === null) return;
-    const f = CP.clamp(R.dayFrac, 0, 1);
-    const a = 0.3 * Math.pow(1 - Math.sin(Math.PI * f), 1.6);
-    if (a < 0.01) return;
-    const k = f; // dawn blue -> dusk orange-purple
-    const r = CP.lerp(30, 120, k), g = CP.lerp(45, 40, k), b = CP.lerp(120, 70, k);
-    ctx.fillStyle = `rgba(${r | 0},${g | 0},${b | 0},${a})`;
+    const { dark, warm } = R.daylight();
+    if (warm > 0.01) {
+      ctx.fillStyle = `rgba(255,130,60,${0.16 * warm})`;
+      ctx.beginPath(); ctx.arc(pcx, pcy, pr, 0, 7); ctx.fill();
+    }
+    if (dark < 0.01) return;
+    ctx.fillStyle = `rgba(8,14,48,${0.58 * dark})`;
     ctx.beginPath(); ctx.arc(pcx, pcy, pr, 0, 7); ctx.fill();
+    // lit windows and street glow
+    if (!glow) glowSprite();
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.globalAlpha = 0.75 * dark;
+    for (let i = 0; i < lights.length; i += 3) {
+      const r = Math.max(4, lights[i + 2]);
+      ctx.drawImage(glow, lights[i] - r, lights[i + 1] - r, r * 2, r * 2);
+    }
+    ctx.restore();
   }
 
   // the satellite itself, big on the right whenever the camera is out in orbit

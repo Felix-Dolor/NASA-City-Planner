@@ -371,10 +371,36 @@
       boxC(ctx, sx + dx * z, sy + dy * z, z, 30, 30, h, { wall: c, roof: S.shade(c, 1.15), windows: true }));
   };
 
+  // Chinook Centre: an isometric car park with the mall at the back, anchor stores, a glass atrium and parked cars
+  const MALL_CARS = ["#e63946", "#f1faee", "#457b9d", "#2b2d42", "#e9c46a", "#8d99ae", "#a8dadc", "#1d3557"];
   LM.mall = (ctx, sx, sy, z) => {
-    ctx.fillStyle = "#6b6f75";
-    ctx.fillRect(sx - 160 * z, sy - 110 * z, 320 * z, 220 * z);
-    boxC(ctx, sx, sy - 20 * z, z, 220, 110, 16, { wall: "#e5ddd0", roof: "#c7cbd1", shop: true, sign: 2 });
+    const p = Pen(ctx, sx, sy, z * 0.8);
+    p.line = z > 0.25;
+    const H = 16 * HF / IC; // 16 m tall
+    // asphalt with a kerb, painted stall rows and a planted edge
+    p.flat(-130, -110, 0, 260, 220, "#a9adb3", true);
+    p.flat(-124, -104, 0.2, 248, 208, "#5d636b", true);
+    const lane = "rgba(255,255,255,0.55)";
+    for (const [y0, y1] of [[18, 46], [62, 90]]) for (let x = -110; x <= 110; x += 14) p.flat(x, y0, 0.4, 1.4, y1 - y0, lane, true);
+    for (const [x0, x1] of [[72, 92], [100, 120]]) for (let y = -96; y <= 0; y += 14) p.flat(x0, y, 0.4, x1 - x0, 1.4, lane, true);
+    // mall: long main hall, a west wing and two taller anchor stores
+    p.shadow(-110, -100, 170, 90, H);
+    p.box(-110, -100, 0, 170, 70, H, "#e8dfd0", "#cfd3d8");
+    p.box(-110, -30, 0, 60, 40, H * 0.85, "#e8dfd0", "#cfd3d8");
+    p.box(30, -100, 0, 34, 70, H * 1.25, "#b8c4cf", "#9aa7b3"); // anchor (east)
+    p.box(-118, -108, 0, 40, 40, H * 1.2, "#d9b38c", "#bf9a74"); // anchor (west)
+    // glass atrium running along the roof
+    p.box(-60, -78, H, 80, 26, H * 0.35, "#8fd3f4", "#bfe8fb");
+    // entrance canopy + coloured shop signs on the front wall
+    p.box(-20, -32, H * 0.45, 26, 4, H * 0.12, "#c8102e");
+    ["#e63946", "#2a9d8f", "#f4a261", "#457b9d"].forEach((c, i) => p.box(-100 + i * 34, -31, H * 0.55, 18, 1.5, H * 0.2, c));
+    // parked cars (fixed pattern so they do not flicker)
+    const car = (x, y, w, d, i) => p.box(x, y, 0.5, w, d, 3.5, MALL_CARS[i % MALL_CARS.length]);
+    let i = 0;
+    for (const y of [20, 64]) for (let x = -108; x <= 104; x += 14) if ((x * 7 + y * 3) % 5 !== 0) car(x + 2, y + 4, 10, 18, i++);
+    for (const x of [74, 102]) for (let y = -94; y <= -6; y += 14) if ((x + y * 5) % 4 !== 0) car(x + 2, y + 2, 16, 9, i++);
+    // trees along the front edge
+    for (let x = -118; x <= 118; x += 26) p.tree(x, 104, 4.5, "#4f9a4a");
   };
 
   LM.skiJump = (ctx, sx, sy, z) => {

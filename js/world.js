@@ -31,36 +31,21 @@
     d.path = p;
   });
 
-  // every district gets its own colour (used for its border and its name label). 24 hues around the wheel;
-  // each district takes the free hue furthest from the hues of the neighbours already coloured.
-  (function districtColours() {
-    const hex = (h, s, l) => {
-      s /= 100; l /= 100;
-      const f = (n) => {
-        const k = (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
-        return Math.round(255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)))).toString(16).padStart(2, "0");
-      };
-      return "#" + f(0) + f(8) + f(4);
+  // every district gets its own colour (golden-angle hues, so neighbours differ) for fills, borders and name tags
+  // (stored as hex because S.shade and friends parse hex)
+  const hslHex = (h, s, l) => {
+    s /= 100; l /= 100;
+    const f = (n) => {
+      const k = (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
+      return Math.round(255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)))).toString(16).padStart(2, "0");
     };
-    const n = sim.districts.length;
-    const free = [...Array(n).keys()];
-    const hue = new Map();
-    const order = sim.districts.slice().sort((a, b) => b.neighbours.length - a.neighbours.length);
-    const gap = (a, b) => { const d = Math.abs(a - b) % 360; return Math.min(d, 360 - d); };
-    for (const d of order) {
-      let best = free[0], bs = -1;
-      for (const i of free) {
-        const h = (i * 360) / n;
-        const near = d.neighbours.filter((x) => hue.has(x)).map((x) => gap(h, hue.get(x)));
-        const sc = near.length ? Math.min(...near) : 180;
-        if (sc > bs) { bs = sc; best = i; }
-      }
-      free.splice(free.indexOf(best), 1);
-      const h = (best * 360) / n;
-      hue.set(d, h);
-      d.color = hex(h, 92, best % 2 ? 66 : 58);
-    }
-  })();
+    return "#" + f(0) + f(8) + f(4);
+  };
+  sim.districts.forEach((d, i) => {
+    const h = Math.round((i * 137.508) % 360);
+    d.color = hslHex(h, 66, 52);
+    d.tint = hslHex(h, 70, 62);
+  });
 
   const polyPath = (poly) => {
     const p = new Path2D();
@@ -261,8 +246,8 @@
   }
 
   // land kept clear around landmarks (their sprites are drawn LM_SCALE times real size)
-  const LM_CLEAR = { reservoir: 90, campus: 170, mall: 190, zoo: 190, airport: 220, stampede: 120, stadium: 110, hospital: 85, kidsHospital: 70, cityHall: 70, saddledome: 85, heritage: 110, skiJump: 60, library: 75, studioBell: 50, spark: 75, bow: 60, calgaryTower: 30, tower: 35, peaceBridge: 20, fort: 50 };
-  world.LM_SCALE = 15; // landmarks are drawn this many times real size so they are easy to spot
+  const LM_CLEAR = (world.LM_CLEAR = { reservoir: 90, campus: 170, mall: 190, zoo: 190, airport: 220, stampede: 120, stadium: 110, hospital: 85, kidsHospital: 70, cityHall: 70, saddledome: 85, heritage: 110, skiJump: 60, library: 75, studioBell: 50, spark: 75, bow: 60, calgaryTower: 30, tower: 35, peaceBridge: 20, fort: 50 });
+  world.LM_SCALE = 12; // landmarks are drawn up to this many times real size from far away (see R.lmScale in render.js)
   const CLEAR_SCALE = 7; // ...but only this much land around them is kept free of city fabric and lots
   function isReserved(x, y) {
     for (const l of CP.LANDMARKS) if (CP.dist(l.pos[0], l.pos[1], x, y) < (LM_CLEAR[l.kind] || 50) * CLEAR_SCALE + 220) return true;

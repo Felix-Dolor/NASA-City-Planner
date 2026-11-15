@@ -326,6 +326,13 @@
     const el = $("#timer");
     el.textContent = CP.clock(timeLeft);
     el.classList.toggle("low", timeLeft <= 60);
+    const dc = $("#dayclock");
+    if (dc && CP.render.daylight) {
+      const { hour, dark, warm } = CP.render.daylight();
+      const h = Math.floor(hour), m = Math.floor((hour - h) * 4) * 15; // to the quarter hour
+      const icon = dark > 0.5 ? "🌙" : warm > 0.4 ? (hour < 12 ? "🌅" : "🌇") : "☀️";
+      dc.textContent = `${icon} ${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+    }
   };
 
   // per-frame bits: equity number animation, timed contracts, undo countdown, coach position
