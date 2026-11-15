@@ -37,7 +37,7 @@ No build step and no dependencies.
 
 ## Decisions (design notes, Phase 0)
 
-- **Timer:** 10 minutes (game, briefing and title all say 10).
+- **Timer:** 10 minutes (game, briefing and title all say 10). On the `demo` branch: 5 minutes, see below.
 - **Districts:** doubled from 12 to 24, all named after real Calgary communities.
 - **Backup:** the pre-revamp playtest build is tagged `demo-backup-v1`.
 
@@ -77,3 +77,22 @@ To regenerate the data: `python tools/build_data.py data/raw`.
 City of Calgary, *Calgary Equity Index 2024* ([data.calgary.ca, dataset i6pu-a35d](https://data.calgary.ca/Demographics/Calgary-Equity-Index-2024/i6pu-a35d)), used under the Open Government Licence – City of Calgary. In the CEI, a higher score means **more** need and barriers; the game flips this so a higher rating is better. Indicators are grouped under the six domains by theme. District values are simple averages of their tracts. Population and home counts are estimates (about 4,500 people per tract).
 
 The game's effect model, costs, grants and events are simplified game mechanics. They are not predictions of what real investments would do. River, road and landmark positions are approximate.
+
+## Presentation demo (`demo` branch)
+
+A scripted 5-minute run for presenting (`CP.DEMO` in `js/config.js`, beats in `js/demo.js`). The timer pauses
+whenever a dialogue is open and while the camera holds on the fire.
+
+1. Intro plays as normal (title, street scene, briefing).
+2. The **Forest Lawn** mission is on top and glows: raise Belonging & Safety and Wellbeing to Average.
+   Go ▸ opens the Plan tab on Forest Lawn. Switch to Build and place a **Community Centre** and a **Library**
+   (either alone is not enough). The mission completes.
+3. A **planning mission** from **Falconridge** drops into the first slot and glows. Its problem is hidden:
+   use the Plan tab to find it (Population Health and Wellbeing). A **Health Clinic** and a **School** fix it.
+4. A **house fire** breaks out in **Marlborough**. The camera holds on it until you click or press any key,
+   then flies back. Click the fire to repair it.
+5. Free time to tour the Plan tab.
+6. With **45 s** left, every kind of disaster hits at once. The timer runs out and the scoreboard appears.
+
+Random disasters and the coach marks are off in the demo. Set `CP.DEMO = null` for the normal game.
+

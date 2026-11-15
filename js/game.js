@@ -12,7 +12,7 @@
   let tween = null;
   const keys = new Set();
   const mouse = { x: 0, y: 0, down: false, dragged: false, sx: 0, sy: 0, over: false, shift: false };
-  const live = () => game.started && !game.paused && !game.userPaused && !game.ended;
+  const live = () => game.started && !game.paused && !game.userPaused && !game.ended && !game.hold; // hold: demo camera beat
 
   // ---------- camera ----------
   function clampCam() {
@@ -84,6 +84,8 @@
     return { x: cx - 20 / z, y: cy + 10 / z, z };
   }
   game.cityView = cityView;
+  game.flyTo = flyTo;
+  game.flying = () => !!tween;
 
   // ---------- district zoom ----------
   let focusZ = 0;
@@ -125,6 +127,7 @@
     }
     game.enterDistrict(d);
     ui.tutStep("go");
+    if (m.spot) { m.spot = false; ui.update(); }
   };
 
   game.discardMission = function (m) {
@@ -294,7 +297,9 @@
       });
       if (missions.unlocked) { missions.unlocked = false; pages.push(CP.STORY.lotsUnlocked); }
       if (ui.mission && completed.includes(ui.mission)) { ui.mission = null; R.highlight = null; }
-      setTimeout(() => { if (!game.ended) ui.dcm(pages); }, 700);
+      const next = CP.demo ? CP.demo.onComplete(completed) : null; // demo: the next story beat
+      if (next && next.pages) pages.push(...next.pages);
+      setTimeout(() => { if (!game.ended) ui.dcm(pages, { done: next && next.done }); }, 700);
     }
     ui.update();
   }
@@ -558,7 +563,7 @@
     ui.tick(game.timeLeft);
     const v = cityView();
     R.cityZ = v.z;
-    flyTo(v.x, v.y, v.z, dur, () => ui.startTutorial());
+    flyTo(v.x, v.y, v.z, dur, () => { if (!CP.demo) ui.startTutorial(); });
     CP.audio.beginMusic();
   }
   function skipIntro() {
@@ -625,6 +630,7 @@
       ui.showUndo(lastPlaced.t > 0 && !lastPlaced.completed ? lastPlaced.b : null, lastPlaced.t);
       if (lastPlaced.t <= 0) lastPlaced = null;
     }
+    if (CP.demo) CP.demo.tick(game);
     ui.tick(game.timeLeft);
     if (game.timeLeft <= 0) endTerm();
   }
@@ -638,6 +644,7 @@
     complain(ev.d, "event", `${ev.t.icon} ${ev.text} We need help, Director!`);
     afterChange(before);
   }
+  game.onEvent = onEvent;
   function endTerm() {
     game.ended = true;
     game.phase = "ended";
@@ -725,8 +732,7 @@
       sim.initWorld();
       sim.recompute();
       res.init();
-      missions.init();
-      events.init();
+      if (CP.demo) CP.demo.init(); else { missions.init(); events.init(); }
       ui.init();
       setupIntro();
       bindInput();

@@ -30,15 +30,15 @@
   const builtSince = (m) => sim.buildings.filter((b) => !b.prebuilt && b.d === m.d && b.type === m.type && b.id >= m.sinceId).length;
   function current(m) {
     if (m.kind === "build") return builtSince(m);
+    if (m.kind === "dual" || (m.kind === "plan" && m.m2 != null)) return Math.min(m.d.score[m.m], m.d.score[m.m2]);
     if (m.kind === "metric" || m.kind === "timed" || m.kind === "plan") return m.d.score[m.m];
-    if (m.kind === "dual") return Math.min(m.d.score[m.m], m.d.score[m.m2]);
     if (m.kind === "multi") return countAtLeast(m.m, m.target);
     return m.d.overall;
   }
   missions.current = current;
   missions.goal = (m) => (m.kind === "multi" ? m.start + m.need : m.kind === "build" ? 1 : m.target);
   missions.progress = (m) => CP.clamp((current(m) - m.start) / (missions.goal(m) - m.start || 1), 0, 1);
-  missions.metrics = (m) => (m.kind === "build" ? [] : m.kind === "district" ? [sim.weakest(m.d)] : m.kind === "dual" ? [m.m, m.m2] : [m.m]);
+  missions.metrics = (m) => (m.kind === "build" ? [] : m.kind === "district" ? [sim.weakest(m.d)] : m.m2 != null ? [m.m, m.m2] : [m.m]);
   // planning missions never say which metric is behind: finding it is the point
   missions.secret = (m) => m.kind === "plan";
   // does this building type help with this mission? (used to tag the build bar)
@@ -57,7 +57,9 @@
   };
 
   // districts that can be asked about: not already holding an offer or a mission, with a free lot
-  const busy = () => new Set(missions.active.concat(missions.offers).map((m) => m.d));
+  const reserved = new Set(); // districts kept for scripted missions (demo)
+  missions.reserve = (d) => d && reserved.add(d);
+  const busy = () => new Set(missions.active.concat(missions.offers).map((m) => m.d).concat([...reserved]));
   function queue() {
     const b = busy();
     const key = (d) => d.overall + 15 * (districtUse.get(d) || 0);
@@ -86,13 +88,14 @@
       used.add(m.d.id + ":" + m.m);
     } else if (m.kind === "plan") {
       const lines = CP.PLAN_LINES[m.m];
-      m.quote = lines[Math.floor(rand() * lines.length)];
+      m.quote = m.quote || lines[Math.floor(rand() * lines.length)];
       m.title = `“${m.quote}”`;
       m.doneTitle = `Help ${m.d.name}`;
       m.icon = "🗺️";
       m.data = `Something is wrong in ${m.d.name}. Use the Plan tab to work out what, then fix it.`;
       m.pitch = `${m.quote} I don't know what we need, Director. Can you figure it out? The Plan tab shows how ${m.d.name} compares with the rest of Calgary.`;
       used.add(m.d.id + ":" + m.m);
+      if (m.m2 != null) used.add(m.d.id + ":" + m.m2);
     } else if (m.kind === "build") {
       const b = CP.BUILDINGS[m.type];
       m.title = `Build ${an(b.name)} ${b.name} in ${m.d.name}`;
@@ -236,6 +239,20 @@
     missions.offers.splice(missions.offers.indexOf(o), 1);
     if (o.giver.offer === o) o.giver.offer = null;
   };
+
+  // A hand-written contract (used by the presentation demo): { kind, d, m, m2?, target, quote? }.
+  // Added straight to the active list at slot `at` (0 = top). The grant follows the normal formulas.
+  missions.scripted = function (spec, at) {
+    const c = Object.assign({ start: 0 }, spec);
+    const need = [c.m, c.m2].filter((x) => x != null).reduce((a, i) => a + Math.max(0, c.target - c.d.score[i]), 0);
+    c.grant = round5((M.grantBase + M.grantPerPoint * need) * (c.kind === "plan" ? M.planBonus : 1));
+    finish(c);
+    activate(c);
+    missions.active.splice(missions.active.indexOf(c), 1);
+    missions.active.splice(Math.min(at || 0, missions.active.length), 0, c);
+    return c;
+  };
+  missions.fillOffers = () => { while (missions.offers.length < M.offers && addOffer()); };
 
   // the term opens with one mission already on the list and civilians waiting with more
   missions.init = function () {

@@ -297,7 +297,7 @@
       : `<span>Now ${CP.chip(cur, true)}</span>${arrow}<span>Goal ${CP.chip(m.target)}</span>`;
     const tl = missions.timeLeft(m);
     const kindTag = secret ? `<span class="ktag plan">Planning · ×${CP.MISSIONS.planBonus} grant</span>` : m.kind === "build" ? `<span class="ktag build">Build</span>` : "";
-    return `<div class="mission ${on ? "on" : ""} k-${m.kind}" data-id="${m.id}" title="Go to ${CP.esc(missions.focus(m).name)}">
+    return `<div class="mission ${on ? "on" : ""} ${m.spot ? "spot" : ""} k-${m.kind}" data-id="${m.id}" title="Go to ${CP.esc(missions.focus(m).name)}">
       <div class="mt">${m.icon} ${CP.esc(m.title)}</div>
       <div class="mgiver muted small">From <b>${CP.esc(m.giver.name)}</b> · ${CP.esc(m.d.name)} ${kindTag}</div>
       ${m.data ? `<div class="mdata">${secret ? "🗺️" : m.kind === "build" ? "🏗️" : "📊"} ${CP.esc(m.data)}</div>` : ""}

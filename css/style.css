@@ -462,3 +462,8 @@ table.lb tr.me td { background: rgba(255, 209, 102, 0.18); font-weight: 700; }
   #profile { display: none; }
   .title-card h1 { font-size: 64px; }
 }
+
+/* demo: the mission the presenter should open next glows until its Go is clicked */
+.mission.spot { border-color: #ffd43b; animation: spotGlow 1.3s ease-in-out infinite; }
+.mission.spot .go { animation: pulse 1.3s infinite; }
+@keyframes spotGlow { 0%, 100% { box-shadow: 0 0 0 2px #ffd43b, 0 0 10px rgba(255, 212, 59, 0.35); } 50% { box-shadow: 0 0 0 2px #ffd43b, 0 0 26px rgba(255, 212, 59, 0.85); } }

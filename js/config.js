@@ -4,7 +4,23 @@
   const CP = window.CP;
 
   // ---------- pacing & economy ----------
-  CP.TERM_SECONDS = 600; // length of the term (10 minutes); pauses while the Deputy City Manager is talking
+  CP.TERM_SECONDS = 300; // length of the term (5 minutes for the presentation demo); pauses while the Deputy City Manager is talking
+  // Presentation demo: a scripted run that hits the story beats in order (see js/demo.js).
+  //   1. Forest Lawn mission (Belonging + Wellbeing): needs a Community Centre AND a Library.
+  //   2. A planning mission (two hidden metrics) appears in the first slot: Falconridge, Health + Wellbeing
+  //      (a Clinic and a School).
+  //   3. When it is done a house fire breaks out; the camera holds on it until the presenter clicks or presses a key.
+  //   4. With chaosAt seconds left, every kind of disaster hits at once. Then the timer ends and the scoreboard shows.
+  // Random disasters are switched off and the coach marks are skipped. Set CP.DEMO = null for the normal game.
+  CP.DEMO = {
+    first: { district: "Forest Lawn", metrics: [3, 4], target: 40 },
+    second: { district: "Falconridge", metrics: [2, 4], target: 40,
+      quote: "People around here keep getting sick, and our kids are falling behind." },
+    fire: { district: "Marlborough", type: "fire" },
+    chaosAt: 45, // seconds left on the timer when everything goes wrong
+    chaos: ["flood", "tornado", "storm", "earthquake", "lightning", "collapse", "rain"],
+    chaosGap: 0.9, // seconds between each disaster
+  };
   CP.START_BUDGET = 30; // $M - enough for 2-3 buildings
   CP.INCOME_PER_MIN = 6; // $M per minute of city revenue (paid in small amounts every few seconds)
   CP.PAYOUT_EVERY = 5; // seconds between revenue/upkeep payouts
@@ -468,7 +484,7 @@
     ],
     briefing: [
       "Director, this is Deputy City Manager Maya Okonkwo at City Hall. The planning satellite CEI-SAT 1 is now under your command.",
-      "Your job: make Calgary the most equitable city on the planet. You have a 10-minute term and $30M. Every building also costs upkeep each minute.",
+      "Your job: make Calgary the most equitable city on the planet. You have a 5-minute term and $30M. Every building also costs upkeep each minute.",
       "Start with MISSIONS and press Go. PLAN shows where life is least fair, using real 2024 Calgary Equity Index data. Then BUILD on a lot in that district.",
       "Residents with a ❗ over their heads have jobs for you: click them to hear them out. If disaster strikes, click it on the map to repair it. Good luck, Director.",
     ],

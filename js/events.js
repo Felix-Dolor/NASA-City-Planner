@@ -115,9 +115,9 @@
     return true;
   }
 
-  ev.fire = function (key) {
+  ev.fire = function (key, where) {
     const t = CP.EVENT_TYPES[key];
-    const d = pickDistrict(t);
+    const d = where || pickDistrict(t);
     const before = d.score[t.metric];
     const p = sim.addPenalty(d, t.metric, key);
     const mood = { d, m: DZ.moodMetric, amount: 0, raw: 0, ev: key, fixed: false, mood: true };
