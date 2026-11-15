@@ -176,6 +176,16 @@ canvas#game.lot { cursor: pointer; }
 #indicators tr.neg td:nth-child(2) { color: var(--bad); font-weight: 700; }
 #indicators p { margin: 6px 0 10px; }
 #band-legend { display: flex; flex-wrap: wrap; gap: 4px; }
+/* NASA satellite layers */
+.nasa-h { margin: 10px 0 2px; font: 600 10px var(--font); letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); }
+.metric.nasa-view.active { border-color: #4ef0a0; background: rgba(78, 240, 160, 0.14); box-shadow: 0 0 0 1px #4ef0a0; }
+.nasa-scale { height: 9px; border-radius: 99px; margin: 8px 0 2px; }
+.nasa-scale-l { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+.pf-nasa { margin: 8px 0 4px; padding: 7px 9px; border-radius: 10px; background: rgba(94, 230, 255, 0.08); border: 1px solid var(--line); }
+.pf-nasa > b { font-size: 11.5px; color: var(--accent); }
+.nasa-cool { margin: 4px 0; font-weight: 600; }
+#nasa-credit { position: fixed; left: 50%; transform: translateX(-50%); bottom: 4px; z-index: 4; pointer-events: none; font: 600 10.5px ui-monospace, Consolas, monospace; color: #d6fbff; background: rgba(4, 10, 26, 0.7); padding: 3px 9px; border-radius: 99px; white-space: nowrap; }
+body.building #nasa-credit { bottom: auto; top: 76px; }
 
 /* Missions */
 .mission { position: relative; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: rgba(30, 45, 90, 0.45); margin: 8px 0; cursor: pointer; }
@@ -614,3 +624,25 @@ table.lb tr.me td { background: rgba(255, 209, 102, 0.18); font-weight: 700; }
   .title-card p { margin: 5px 0; }
   .title-actions { margin: 12px 0 10px; }
 }
+
+/* ---------- trailer mode (index.html#trailer) ---------- */
+body.trailer-nopanel #panel { display: none !important; }
+body.trailer #coach, body.trailer #btn-city, body.trailer #undo, body.trailer #nasa-credit { display: none !important; }
+body.trailer-card #topbar, body.trailer-card #panel, body.trailer-card #buildbar, body.trailer-card #profile, body.trailer-card #toasts,
+body.trailer-card #banner, body.trailer-card #speech, body.trailer-card #tooltip { display: none !important; }
+#trailer { position: fixed; inset: 0; z-index: 60; pointer-events: none; }
+#trailer .tr-card { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; padding: 26px 46px 24px; border-radius: 22px;
+  background: rgba(255, 255, 255, 0.95); color: #1a2038; border-top: 12px solid var(--yyc); box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6); animation: trIn 0.6s ease-out; max-width: 92vw; }
+#trailer .tr-kicker { color: var(--yyc); font: 700 13px ui-monospace, Consolas, monospace; letter-spacing: 0.12em; text-transform: uppercase; }
+#trailer h1 { font: 700 96px/1 var(--display); margin: 8px 0 4px; letter-spacing: 4px; color: var(--yyc); }
+#trailer h1 span { color: #1a2038; }
+#trailer h2 { font: 600 24px var(--display); margin: 4px 0 0; }
+#trailer .tr-url { margin-top: 12px; font: 700 22px var(--display); color: #fff; background: var(--yyc); border-radius: 12px; padding: 8px 18px; display: inline-block; }
+#trailer .tr-src { margin-top: 12px; font-size: 12px; color: #67708a; }
+#trailer .tr-cap { position: absolute; left: 50%; top: 96px; transform: translateX(-50%); width: max-content; max-width: 86vw; text-align: center; padding: 12px 26px; border-radius: 16px;
+  font: 600 30px/1.25 var(--display); color: #fff; background: rgba(4, 10, 30, 0.82); border: 2px solid rgba(94, 230, 255, 0.8); box-shadow: 0 0 30px rgba(94, 230, 255, 0.35); }
+#trailer .tr-cap b { color: #ffd166; }
+#trailer .tr-cap.in { animation: trCap 0.45s cubic-bezier(.2,1.4,.4,1); }
+#trailer .tr-mark { position: absolute; right: 14px; bottom: 10px; font: 600 11px var(--font); color: rgba(255, 255, 255, 0.85); background: rgba(0, 0, 0, 0.45); padding: 3px 9px; border-radius: 99px; }
+@keyframes trIn { from { opacity: 0; transform: translate(-50%, -46%) scale(0.92); } }
+@keyframes trCap { from { opacity: 0; transform: translateX(-50%) translateY(-12px) scale(0.92); } }

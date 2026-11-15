@@ -93,6 +93,28 @@
     }
     d.overall = s / ND;
   }
+  // NASA satellite measurements per district (tools/build_nasa.py): summer greenness (MODIS NDVI) and
+  // summer daytime land surface temperature (MODIS LST, °C). They don't change the CEI ratings; they make
+  // parks cool hot districts more (see nasaHeat below) and are shown in Plan and on the district card.
+  const NASA = window.NASA_DATA && window.NASA_DATA.tracts;
+  const nasaOf = (t, k) => (NASA && NASA[t.id] ? NASA[t.id][k] : null);
+  const meanOk = (a) => { const v = a.filter((x) => x !== null && x !== undefined); return v.length ? mean(v) : null; };
+  sim.cityNasa = { ndvi: meanOk(D.tracts.map((t) => nasaOf(t, 0))), lst: meanOk(D.tracts.map((t) => nasaOf(t, 1))) };
+  for (const d of sim.districts) {
+    d.nasa = { ndvi: meanOk(d.tracts.map((t) => nasaOf(t, 0))), lst: meanOk(d.tracts.map((t) => nasaOf(t, 1))) };
+  }
+  if (NASA) {
+    const ls = sim.districts.map((d) => d.nasa.lst).filter((v) => v !== null), ns = sim.districts.map((d) => d.nasa.ndvi).filter((v) => v !== null);
+    sim.nasaRange = { lst: [Math.min(...ls), Math.max(...ls)], ndvi: [Math.min(...ns), Math.max(...ns)] };
+  }
+  // 0..1: how much hotter than the Calgary average NASA measured this district in summer
+  sim.nasaHeat = (d) => (d.nasa && d.nasa.lst !== null && sim.nasaRange ? CP.clamp((d.nasa.lst - sim.cityNasa.lst) / Math.max(0.5, sim.nasaRange.lst[1] - sim.cityNasa.lst), 0, 1) : 0);
+  // extra Climate and Health a park (any "buffer" building) gives in a district NASA measured as hot
+  sim.coolBonus = (type, d) => {
+    const spec = CP.BUILDINGS[type], h = sim.nasaHeat(d);
+    return spec.buffer && h > 0 ? { climate: Math.round(CP.NASA_COOL.climate * h), health: Math.round(CP.NASA_COOL.health * h) } : null;
+  };
+
   for (const d of sim.districts) {
     for (let i = 0; i < ND; i++) d.base[i] = mean(d.tracts.map((t) => t.s[i]));
     for (const ind of ALL_IND) d.ind[ind.key] = mean(d.tracts.map((t) => t[ind.key]));
@@ -359,6 +381,8 @@
     for (const b of list) {
       const spec = CP.BUILDINGS[b.type], own = add[b.d.id];
       for (let i = 0; i < ND; i++) own[i] += spec.gain[i];
+      const cool = sim.coolBonus(b.type, b.d);
+      if (cool) { own[5] += cool.climate; own[2] += cool.health; }
       if (b.demolished) for (let i = 0; i < ND; i++) own[i] += CP.DEMOLISH.gain[i];
       if (b.rezoned) own[3] -= CP.REZONE.goodwill;
       const a = spec.area;

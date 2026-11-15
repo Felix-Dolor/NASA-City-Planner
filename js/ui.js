@@ -56,6 +56,19 @@
       const b = e.target.closest(".metric");
       if (b) { ui.setMetric(+b.dataset.m); CP.audio.click(); }
     });
+    // NASA satellite layers in Plan: the real Landsat image, summer greenness and summer surface heat
+    const N = window.NASA_DATA;
+    if (N) {
+      $("#nasa-plan").innerHTML = `<div class="nasa-h">🛰️ NASA satellite data</div>
+        <button class="metric nasa-view" id="btn-nasa-view"><span>🛰️ NASA view: real Landsat photo</span><span class="mchip" id="nasa-view-state">Off</span></button>
+        <button class="metric" data-nasa="ndvi"><span>🌿 Greenness (MODIS NDVI)</span><span class="mchip">summer 2025</span></button>
+        <button class="metric" data-nasa="lst"><span>🌡️ Summer surface heat (MODIS)</span><span class="mchip">summer 2025</span></button>`;
+      $("#nasa-plan").addEventListener("click", (e) => {
+        if (e.target.closest("#btn-nasa-view")) { ui.toggleNasaView(); CP.audio.click(); return; }
+        const b = e.target.closest("[data-nasa]");
+        if (b) { ui.setNasa(b.dataset.nasa); CP.audio.click(); }
+      });
+    }
     $("#band-legend").innerHTML = CP.BANDS.slice().reverse().map((b) => `<span class="band" style="background:${b.color};color:${b.ink}"><i>${b.sym}</i> ${b.name} <small>${b.min}+</small></span>`).join("");
 
     // Missions: emergencies, Go buttons, Discard, civilian offers, hover highlights
@@ -167,6 +180,7 @@
       <div style="margin-bottom:5px">${b.short}</div>
       <div class="bld-fx">${effectText(b)}</div>
       ${b.risk ? `<div class="warn" style="margin-top:4px">⚠ ${b.risk}</div>` : ""}
+      ${b.buffer && window.NASA_DATA ? `<div class="pos" style="margin-top:4px">🛰️ Cools hot districts more: up to +${CP.NASA_COOL.climate} Climate where NASA measured the most summer heat.</div>${coolText(type, R.focus)}` : ""}
       <div class="bld-zones" style="margin-top:5px">${b.zones.split("").map((z) => `<i style="--zc:${CP.ZONES[z].color}">${CP.ZONES[z].icon} ${CP.ZONES[z].name}</i>`).join("")}</div>
       <div class="tt-cost ${sim.canAfford(cost) ? "" : "neg"}">Cost ${CP.money(cost)}${R.focus && R.focus.def.cost !== 1 ? ` in ${CP.esc(R.focus.name)}` : ""} · ${upkeepText(b)}</div>`;
   }
@@ -185,7 +199,7 @@
     $$(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
     $$(".tabpanel").forEach((p) => p.classList.toggle("active", p.id === "panel-" + tab));
     if (tab !== "build") ui.select(null);
-    R.overlayMetric = tab === "plan" ? ui.metric : null; // Plan view = equity colours; otherwise normal view
+    R.overlayMetric = tab === "plan" ? ui.nasa || ui.metric : null; // Plan view = equity (or NASA) colours; otherwise normal view
     ui.hideTooltip();
     if (tab === "build") ui.tutStep("build");
     if (tab === "plan") ui.renderIndicators();
@@ -201,20 +215,68 @@
 
   ui.setMetric = function (i) {
     ui.metric = i;
+    ui.nasa = null;
     if (ui.tab === "plan") R.overlayMetric = i;
-    $$(".metric").forEach((b) => b.classList.toggle("active", +b.dataset.m === i));
+    $$(".metric[data-m], .metric[data-nasa]").forEach((b) => b.classList.toggle("active", b.dataset.m !== undefined && +b.dataset.m === i));
     const d = CP.DOMAINS[i];
     $("#metric-about").innerHTML = `<b>${d.icon} ${d.label}</b><p>${d.plain}</p>`;
     ui.renderIndicators();
   };
+  // Plan view coloured by a NASA layer: "ndvi" (greenness) or "lst" (summer surface heat)
+  const NASA_ABOUT = {
+    ndvi: ["🌿 Greenness from space", "NASA's Terra satellite (MODIS) measures how much living vegetation covers the ground (NDVI: 0 = bare or paved, 1 = dense green). Averaged over July 2025. Greener districts stay cooler and healthier."],
+    lst: ["🌡️ Summer surface heat from space", "NASA's Terra satellite (MODIS) measures how hot the ground gets on summer afternoons (land surface temperature, averaged over four 8-day periods, July to early August 2025). Paved, treeless districts form urban heat islands. A park in a hot district cools it more."],
+  };
+  ui.setNasa = function (key) {
+    ui.nasa = key;
+    if (ui.tab === "plan") R.overlayMetric = key;
+    $$(".metric[data-m], .metric[data-nasa]").forEach((b) => b.classList.toggle("active", b.dataset.nasa === key));
+    const [h, p] = NASA_ABOUT[key];
+    const sc = R.nasaScale(key);
+    $("#metric-about").innerHTML = `<b>${h}</b><p>${p}</p><div class="nasa-scale" style="background:linear-gradient(90deg,${sc.join(",")})"></div>
+      <div class="nasa-scale-l"><span>${key === "ndvi" ? "less green" : "cooler"}</span><span>${key === "ndvi" ? "greener" : "hotter"}</span></div>`;
+    ui.renderIndicators();
+  };
+  ui.toggleNasaView = function (on) {
+    R.nasaView = on === undefined ? !R.nasaView : on;
+    const st = $("#nasa-view-state");
+    if (st) st.textContent = R.nasaView ? "On" : "Off";
+    $("#btn-nasa-view") && $("#btn-nasa-view").classList.toggle("active", R.nasaView);
+    $("#nasa-credit").classList.toggle("hidden", !R.nasaView);
+    if (R.nasaView && !R.nasaReady()) ui.toast("🛰️ Downloading NASA's Landsat image…");
+  };
+  // one line of NASA measurements for a district, next to the Calgary average
+  ui.nasaLine = function (d) {
+    if (!d.nasa || d.nasa.ndvi === null) return "";
+    const c = sim.cityNasa, g = d.nasa.ndvi - c.ndvi, h = d.nasa.lst - c.lst;
+    return `<div class="pf-nasa"><b>🛰️ NASA satellite, summer 2025</b>
+      <div class="tt-row"><span>🌿 Greenness (NDVI)</span><span><b class="${Math.abs(g) < 0.02 ? "" : g > 0 ? "pos" : "neg"}">${d.nasa.ndvi.toFixed(2)}</b> <span class="muted small">Calgary ${c.ndvi.toFixed(2)}</span></span></div>
+      <div class="tt-row"><span>🌡️ Surface heat</span><span><b class="${Math.abs(h) < 0.3 ? "" : h < 0 ? "pos" : "neg"}">${d.nasa.lst.toFixed(1)} °C</b> <span class="muted small">Calgary ${c.lst.toFixed(1)}</span></span></div></div>`;
+  };
+  // extra line for a park in a district NASA measured as hot
+  function coolText(type, d) {
+    const c = d && sim.coolBonus(type, d);
+    if (!c || (!c.climate && !c.health)) return "";
+    return `<div class="pos nasa-cool">🛰️ NASA measured ${CP.esc(d.name)} ${(d.nasa.lst - sim.cityNasa.lst).toFixed(1)} °C hotter than Calgary's summer average: a park here cools it more (+${c.climate} 🌳 Climate, +${c.health} ❤️ Health).</div>`;
+  }
 
   // all of the real CEI indicators for the chosen metric: the hovered/zoomed district next to Calgary
   let indKey = "";
   ui.renderIndicators = function (hover) {
     const d = hover || R.focus || R.highlight || null;
-    const key = (d ? d.id : "city") + ":" + ui.metric;
+    const key = (d ? d.id : "city") + ":" + (ui.nasa || ui.metric);
     if (key === indKey) return;
     indKey = key;
+    if (ui.nasa) {
+      const k = ui.nasa, c = sim.cityNasa[k];
+      const ranked = sim.districts.filter((x) => x.nasa[k] !== null).sort((a, b) => (k === "ndvi" ? a.nasa[k] - b.nasa[k] : b.nasa[k] - a.nasa[k]));
+      const fmt = (v) => (k === "ndvi" ? v.toFixed(2) : v.toFixed(1) + " °C");
+      const rows = ranked.slice(0, 5).map((x) => `<tr class="${x === d ? "pos" : ""}"><td>${CP.esc(x.name)}</td><td>${fmt(x.nasa[k])}</td><td class="muted">${fmt(c)}</td></tr>`).join("");
+      const mine = d && d.nasa[k] !== null ? `<p><b>${CP.esc(d.name)}</b>: ${fmt(d.nasa[k])} (Calgary ${fmt(c)}), #${ranked.indexOf(d) + 1} of ${ranked.length} ${k === "ndvi" ? "least green" : "hottest"}.</p>` : "";
+      $("#indicators").innerHTML = `${mine}<table><thead><tr><th>${k === "ndvi" ? "Least green districts" : "Hottest districts"}</th><th>NASA</th><th>Calgary</th></tr></thead><tbody>${rows}</tbody></table>
+        <p class="muted small">Source: NASA GIBS, ${k === "ndvi" ? "MODIS Terra 16-day NDVI" : "MODIS Terra 8-day daytime land surface temperature"}, July–August 2025, averaged over each district's census tracts.</p>`;
+      return;
+    }
     const rows = CP.INDICATORS.filter((x) => x.domain === ui.metric).map((ind) => {
       const avg = sim.cityInd[ind.key], v = d ? d.ind[ind.key] : avg;
       let cls = "";
@@ -414,6 +476,7 @@
       const before = d.score[i], after = Math.min(100, before + g);
       html += `<div class="tt-row"><span>${CP.DOMAINS[i].icon} ${CP.DOMAINS[i].label}</span><span>${CP.chip(before)}${CP.bandIndex(before) === CP.bandIndex(after) ? ' <span class="pos">▲ ' + sgn(after - before) + "</span>" : arrow + CP.chip(after)}</span></div>`;
     });
+    html += coolText(type, d);
     html += `<div class="tt-cost ${short ? "neg" : ""}">Cost ${CP.money(cost)}${short ? " · not enough budget" : ""} · upkeep ${CP.money(b.upkeep)}/min</div>`;
     return html + `<div class="muted" style="margin-top:5px">${CP.touch ? "Tap" : "Click"} to zoom in and choose a lot.</div>`;
   };
@@ -437,6 +500,7 @@
     if (pv.harmedHomes) html += `<div class="neg">◯ ${b.area.what}: about ${pv.harmedHomes.toLocaleString()} homes in range lose out${pv.buffered ? ' <span class="pos">(park buffer: −75% harm)</span>' : ""}</div>`;
     if (pv.helpedHomes && !pv.harmedHomes) html += `<div class="pos">◯ ${b.area.what}: reaches about ${pv.helpedHomes.toLocaleString()} homes</div>`;
     if (pv.protestRisk) html += `<div class="neg">📢 Residents will protest: building here stops for ${CP.PROTEST.seconds} s. A park nearby would buffer it.</div>`;
+    html += coolText(ui.selected, pv.lot.d);
     if (pv.lot.house) html += `<div class="warn">🏚 Demolishes a family home: +${CP.money(CP.DEMOLISH.cost)} and less housing here.</div>`;
     const dv = pv.overallAfter - pv.overallBefore;
     html += `<div class="tt-row tt-all"><span>Calgary Equity</span><span>${pv.overallBefore.toFixed(1)} → <b class="${dv >= 0 ? "pos" : "neg"}">${pv.overallAfter.toFixed(1)}</b></span></div>`;
@@ -564,6 +628,7 @@
         const moved = Math.abs(d.score[i] - d.startScore[i]) >= 0.5;
         return `<div class="tt-row"><span>${dm.icon} ${dm.label}</span><span>${moved ? `<span class="muted small">was ${Math.round(d.startScore[i])}</span> ` : ""}${CP.chip(d.score[i], true)}</span></div>`;
       }).join("")}
+      ${ui.nasaLine(d)}
       <div class="pf-res">
         <canvas width="88" height="112"></canvas>
         <div><b>${CP.esc(r.name)}</b> <span class="muted small">lives here</span>

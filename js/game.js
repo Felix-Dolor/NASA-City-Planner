@@ -521,6 +521,7 @@
       if (k === "1") ui.setTab("missions");
       if (k === "2") ui.setTab("plan");
       if (k === "3") ui.setTab("build");
+      if (k === "n") ui.toggleNasaView();
       if (k === "shift") updateHover();
     });
     window.addEventListener("keyup", (e) => {
@@ -773,10 +774,70 @@
     requestAnimationFrame(frame);
   }
 
+  // ---------- trailer mode (index.html#trailer) ----------
+  // A scripted 28-second tour used to record the game's trailer. It shows its opening card and waits until
+  // window.CP_TRAILER_GO() is called (so a screen recording can start first), then runs on its own.
+  function trailer() {
+    ui.tut.on = false;
+    skipIntro();
+    tween = null;
+    const orbitZ = R.minZoom() * 1.25;
+    Object.assign(R.cam, { x: 0, y: 0, z: orbitZ });
+    document.body.classList.add("trailer", "trailer-card");
+    const el = document.createElement("div");
+    el.id = "trailer";
+    el.innerHTML = `<div class="tr-card"><div class="tr-kicker">🛰️ NASA Space Apps Challenge 2026</div><h1>CEI<span>·</span>SAT</h1>
+      <h2>Make Calgary the most equitable city on the planet</h2></div><div class="tr-cap hidden"></div>
+      <div class="tr-mark">Code and trailer made with help from AI (Claude Code)</div>`;
+    document.body.appendChild(el);
+    const card = el.querySelector(".tr-card"), cap = el.querySelector(".tr-cap");
+    const say = (html) => { cap.innerHTML = html; cap.classList.remove("hidden"); cap.classList.remove("in"); void cap.offsetWidth; cap.classList.add("in"); };
+    const showCard = (html) => { card.innerHTML = html; card.classList.remove("hidden"); document.body.classList.add("trailer-card"); cap.classList.add("hidden"); };
+    const hideCard = () => { card.classList.add("hidden"); document.body.classList.remove("trailer-card"); };
+    const fl = sim.districts.find((d) => d.name === "Forest Lawn") || sim.districts[0];
+    const steps = [
+      [0, () => flyTo(0, 0, orbitZ * 1.6, 2.8)],
+      [2.8, () => { hideCard(); document.body.classList.add("trailer-nopanel"); ui.toggleNasaView(true); const v = cityView(); flyTo(v.x, v.y, v.z, 2.6); say("You command a planning satellite above <b>Calgary</b>"); }],
+      [5.6, () => { say("Seeing the city through real <b>NASA Landsat</b> imagery"); const v = cityView(); flyTo(v.x + 800, v.y - 600, v.z * 1.7, 2.8); }],
+      [8.6, () => { document.body.classList.remove("trailer-nopanel"); ui.toggleNasaView(false); ui.setTab("plan"); ui.setMetric(3); const v = cityView(); flyTo(v.x, v.y, v.z, 0.9); say("Coloured by the real <b>2024 Calgary Equity Index</b>"); }],
+      [11.6, () => { ui.setNasa("lst"); say("<b>NASA MODIS</b> finds the hottest neighbourhoods"); }],
+      [14.6, () => {
+        ui.setTab("build"); ui.select("park"); game.enterDistrict(fl, true);
+        say("Build where life is least fair");
+      }],
+      [15.6, () => {
+        const lots = fl.lots.filter((l) => !l.building && !sim.isLocked(l) && CP.BUILDINGS.park.zones.includes(l.zone)).sort((a, b) => a.house - b.house);
+        trailer.lot = lots[0];
+        if (!trailer.lot) return;
+        const [x, y] = R.toScreen(trailer.lot.x, trailer.lot.y);
+        mouse.x = x; mouse.y = y; mouse.over = true;
+        updateHover();
+      }],
+      [17.8, () => { if (trailer.lot) { tryPlace(trailer.lot); mouse.over = false; updateHover(); } say("A park cools a hot district: <b>NASA data changes the plan</b>"); }],
+      [20.6, () => { ui.select(null); const ev = events.fire("tornado"); onEvent(ev); game.goDisaster(ev); say("Disasters strike. Every choice has trade-offs."); }],
+      [23.8, () => {
+        ui.hideBanner && ui.hideBanner();
+        const v = cityView(); flyTo(v.x, v.y, v.z * 0.8, 3);
+        ui.toggleNasaView(true);
+        showCard(`<div class="tr-kicker">Real Calgary equity data + NASA Earth observations</div><h1>CEI<span>·</span>SAT</h1>
+          <h2>Play free in your browser</h2><div class="tr-url">felix-dolor.github.io/NASA-City-Planner</div>
+          <div class="tr-src">Data: City of Calgary Equity Index 2024 · NASA HLS Landsat &amp; MODIS via NASA GIBS</div>`);
+      }],
+    ];
+    window.CP_TRAILER_GO = () => {
+      if (trailer.started) return;
+      trailer.started = true;
+      for (const [t, fn] of steps) setTimeout(fn, t * 1000);
+    };
+    if (new URLSearchParams(location.hash.slice(1)).has("autostart")) setTimeout(window.CP_TRAILER_GO, 200);
+  }
+
   // Dev hooks: index.html#play skips the opening; add &end to jump to the report, &t=30 to set the seconds
-  // left, &event=flood to fire a disaster right away (&event=all for every kind), &notips to skip the tutorial.
+  // left, &event=flood to fire a disaster right away (&event=all for every kind), &notips to skip the tutorial,
+  // &nasa to switch on NASA view, &plan=ndvi or &plan=lst to open Plan on a NASA layer.
   function devHash() {
     const h = new URLSearchParams(location.hash.slice(1));
+    if (h.has("trailer")) return trailer();
     if (!h.has("play")) return;
     if (h.has("notips")) ui.tut.on = false;
     skipIntro();
@@ -791,6 +852,8 @@
       ui.setTab("build");
       ui.select(CP.BUILD_ORDER.find((t) => missions.helps(m, t)) || CP.BUILD_ORDER[0]);
     }, 1000);
+    if (h.has("nasa")) setTimeout(() => ui.toggleNasaView(true), 400);
+    if (h.has("plan")) setTimeout(() => { ui.setTab("plan"); const k = h.get("plan"); if (k === "ndvi" || k === "lst") ui.setNasa(k); }, 500);
     if (h.has("orbit")) setTimeout(() => flyTo(0, 0, R.minZoom() * 1.3, 0.1), 1000);
     if (h.has("end")) endTerm();
   }

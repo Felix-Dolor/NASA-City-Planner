@@ -211,6 +211,8 @@
       area: { r: 1800, gain: E(0, 0, 0, -10, 0, 0), what: "odour" },
       relates: ["flood_susceptibility", "diabetes_agestd_perc"], risk: "Nobody wants to live next to it: lower Belonging nearby" },
   };
+  // A park in the district NASA measured as hottest in summer gets this much extra (scaled down for cooler ones)
+  CP.NASA_COOL = { climate: 12, health: 5 };
   // one short line per building for the build bar
   const SHORT = {
     clinic: "Gives nearby families a local doctor.",
@@ -470,6 +472,7 @@
       "Director, this is Deputy City Manager Maya Okonkwo at City Hall. The planning satellite CEI-SAT 1 is now under your command.",
       "Your job: make Calgary the most equitable city on the planet. You have a 10-minute term and $30M. Every building also costs upkeep each minute.",
       "Start with MISSIONS and press Go. PLAN shows where life is least fair, using real 2024 Calgary Equity Index data. Then BUILD on a lot in that district.",
+      "CEI-SAT 1 is also linked to NASA's Earth-observing satellites. In PLAN you can switch on NASA view for the real Landsat photo, and see which districts NASA measures as the least green and the hottest in summer. A park cools a hot district the most.",
       "Residents with a ❗ over their heads have jobs for you: click them to hear them out. If disaster strikes, click it on the map to repair it. Good luck, Director.",
     ],
     missionDone: [

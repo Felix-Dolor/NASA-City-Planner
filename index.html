@@ -62,6 +62,7 @@
       <h3>Plan <span class="muted small">· real 2024 Calgary Equity Index data</span></h3>
       <p class="muted">Districts are coloured by how fair life is for the chosen metric. Hover a district to see its real numbers.</p>
       <div id="metric-list"></div>
+      <div id="nasa-plan"></div>
       <div id="metric-about"></div>
       <div id="indicators"></div>
       <div id="band-legend"></div>
@@ -81,6 +82,7 @@
   <aside id="profile" class="panel hidden"></aside>
   <button id="btn-city" class="btn hidden">◂ City view <kbd>Esc</kbd></button>
 
+  <div id="nasa-credit" class="hidden">🛰️ NASA Landsat 8/9 (HLS) · 1 Aug 2025 · via NASA GIBS</div>
   <div id="tooltip" class="hidden"></div>
   <div id="speech" class="hidden"></div>
   <div id="toasts"></div>
@@ -129,17 +131,18 @@
       <h1>CEI<span>·</span>SAT</h1>
       <h2>Make Calgary the most equitable city on the planet</h2>
       <p>You are Calgary's new <b>Planning Director</b>. From a satellite high above the city, you decide what gets built, and where.</p>
-      <p>You have one <b>10-minute term</b> and a small budget. Build where life is least fair.</p>
+      <p>You have one <b>10-minute term</b> and a small budget. Build where life is least fair, using real City of Calgary equity data and NASA satellite imagery.</p>
       <div class="title-actions">
         <button class="btn primary big" id="btn-start">▶ Begin your term</button>
       </div>
-      <div class="credit">Data: City of Calgary, <i>Calgary Equity Index 2024</i> (Open Government Licence – City of Calgary)</div>
+      <div class="credit">Data: City of Calgary, <i>Calgary Equity Index 2024</i> (Open Government Licence – City of Calgary) · NASA Earth observations (Landsat HLS, MODIS) via NASA GIBS</div>
     </div>
   </div>
 
   <div id="loading" class="screen"><div class="spinner"></div><div>Calibrating satellite optics…</div></div>
 
   <script src="js/data/cei-data.js"></script>
+  <script src="js/data/nasa-data.js"></script>
   <script src="js/core.js"></script>
   <script src="js/data/geo.js"></script>
   <script src="js/config.js"></script>

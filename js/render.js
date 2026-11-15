@@ -22,8 +22,61 @@
     showNeeds: false, // need icons above residents' heads
     dayFrac: null, // 0..1 through the term (dawn -> noon -> dusk)
     cityZ: 0.02, // zoom of the whole-city view (set by game.js)
+    nasaView: false, // show NASA's real Landsat image of Calgary under the map
+    nasaA: 0, // eased opacity of that image
     time: 0,
   });
+
+  // ---------- NASA Earth observation layers (tools/build_nasa.py) ----------
+  // The Landsat image is in Web Mercator like the map, so it is drawn straight onto its box in game metres.
+  // Its edges are feathered so it blends into the painted planet when seen from orbit.
+  const NASA = window.NASA_DATA || null;
+  let nasaImg = null;
+  if (NASA) {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement("canvas");
+      c.width = img.width; c.height = img.height;
+      const g = c.getContext("2d");
+      g.drawImage(img, 0, 0);
+      g.globalCompositeOperation = "destination-out";
+      const f = Math.round(Math.min(img.width, img.height) * 0.07);
+      const edge = (x0, y0, x1, y1, x, y, w, h) => {
+        const gr = g.createLinearGradient(x0, y0, x1, y1);
+        gr.addColorStop(0, "rgba(0,0,0,1)");
+        gr.addColorStop(1, "rgba(0,0,0,0)");
+        g.fillStyle = gr;
+        g.fillRect(x, y, w, h);
+      };
+      edge(0, 0, f, 0, 0, 0, f, c.height);
+      edge(c.width, 0, c.width - f, 0, c.width - f, 0, f, c.height);
+      edge(0, 0, 0, f, 0, 0, c.width, f);
+      edge(0, c.height, 0, c.height - f, 0, c.height - f, c.width, f);
+      nasaImg = c;
+    };
+    img.src = NASA.image.src;
+  }
+  R.nasaReady = () => !!nasaImg;
+  // colour scales for the two NASA layers in Plan view (value -> colour); higher = better for greenness, worse for heat
+  const lerpC = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
+  const scale = (stops, t) => {
+    t = CP.clamp(t, 0, 1) * (stops.length - 1);
+    const i = Math.min(stops.length - 2, Math.floor(t));
+    const c = lerpC(stops[i], stops[i + 1], t - i);
+    return `rgb(${c[0]},${c[1]},${c[2]})`;
+  };
+  const GREEN = [[140, 98, 57], [214, 196, 106], [120, 190, 90], [30, 120, 50]];
+  const HEAT = [[49, 130, 206], [250, 230, 120], [245, 140, 50], [200, 30, 40]];
+  R.nasaColor = function (d, key) {
+    const v = d.nasa && d.nasa[key];
+    if (v === null || v === undefined || !sim.nasaRange) return "#888";
+    const [lo, hi] = sim.nasaRange[key];
+    return scale(key === "ndvi" ? GREEN : HEAT, (v - lo) / (hi - lo || 1));
+  };
+  R.nasaScale = (key) => (key === "ndvi" ? GREEN : HEAT).map((c) => `rgb(${c[0]},${c[1]},${c[2]})`);
+  const isNasa = () => R.overlayMetric === "ndvi" || R.overlayMetric === "lst";
+  // fill colour of a district in Plan view (CEI band, or the NASA layer)
+  const ovColor = (d) => (isNasa() ? R.nasaColor(d, R.overlayMetric) : CP.bandOf(d.score[R.overlayMetric]).color);
 
   let canvas, ctx, W = 0, H = 0, DPR = 1;
   const LM_SPRITE_Z = 0.012; // landmarks are drawn as sprites from this zoom in (dots further out)
@@ -159,12 +212,23 @@
     ctx.drawImage(far.canvas, far.x0, far.y0, far.W * far.mpp, far.H * far.mpp);
     ctx.drawImage(city.canvas, city.x0, city.y0, city.W * city.mpp, city.H * city.mpp);
 
+    // NASA's Landsat image: on when NASA view is switched on, and always seen from orbit (the satellite's real view)
+    const orbitA = CP.clamp((R.cityZ * 0.8 - z) / (R.cityZ * 0.45), 0, 1);
+    R.nasaA += ((R.nasaView ? 1 : 0) - R.nasaA) * Math.min(1, dt * 5);
+    const nasaA = Math.max(R.nasaA * 0.95, orbitA * 0.92);
+    if (nasaImg && nasaA > 0.01) {
+      const bx = NASA.image.box;
+      ctx.globalAlpha = nasaA;
+      ctx.drawImage(nasaImg, bx[0], bx[1], bx[2] - bx[0], bx[3] - bx[1]);
+      ctx.globalAlpha = 1;
+    }
+
     const near = CP.clamp((z - 0.1) / 0.25, 0, 1); // 0 from orbit, 1 close to the ground
     const map = CP.clamp((z - 0.008) / 0.006, 0, 1); // map furniture fades in as the city fills the view
 
     // far away: every district in its own colour. Close up: a faint wash stays so you can still tell them apart.
     if (map > 0 && R.overlayMetric === null) {
-      const a = (0.14 + CP.clamp((0.09 - z) / 0.05, 0, 1) * 0.46) * map; // never fully gone up close
+      const a = (0.14 + CP.clamp((0.09 - z) / 0.05, 0, 1) * 0.46) * map * (1 - 0.7 * R.nasaA); // never fully gone up close; lighter over the NASA image
       if (a > 0.01) {
         ctx.globalAlpha = a;
         for (const d of sim.districts) { ctx.fillStyle = d.tint; ctx.fill(d.path, "evenodd"); }
@@ -175,7 +239,7 @@
     if (R.overlayMetric !== null && map > 0) {
       ctx.globalAlpha = 0.6 * map;
       for (const d of sim.districts) {
-        ctx.fillStyle = CP.bandOf(d.score[R.overlayMetric]).color;
+        ctx.fillStyle = ovColor(d);
         ctx.fill(d.path, "evenodd");
       }
       ctx.globalAlpha = 1;
@@ -203,7 +267,7 @@
       for (const d of sim.districts) ctx.stroke(d.path);
       ctx.lineWidth = 3.4 / z;
       for (const d of sim.districts) {
-        ctx.strokeStyle = R.overlayMetric !== null ? CP.bandOf(d.score[R.overlayMetric]).color : d.color;
+        ctx.strokeStyle = R.overlayMetric !== null ? ovColor(d) : d.color;
         ctx.stroke(d.path);
       }
       ctx.globalAlpha = 1;
@@ -678,6 +742,11 @@
       const [sx, sy] = R.toScreen(d.label[0], d.label[1]);
       if (sx < -80 || sx > W + 80 || sy < -40 || sy > H + 40) continue;
       if (d === R.focus) continue; // its name is on the profile card
+      if (isNasa()) {
+        const v = d.nasa[R.overlayMetric];
+        label(v === null ? d.name : `${d.name} ${R.overlayMetric === "ndvi" ? v.toFixed(2) : v.toFixed(1) + "°"}`, sx, sy + 16, R.nasaColor(d, R.overlayMetric), null, d.color);
+        continue;
+      }
       const ov = CP.bandOf(R.overlayMetric !== null ? d.score[R.overlayMetric] : d.overall);
       label(d.name, sx, sy + 16, ov ? ov.color : null, ov ? ov.sym : null, d.color);
     }
