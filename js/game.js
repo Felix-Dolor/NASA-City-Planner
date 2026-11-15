@@ -86,11 +86,13 @@
 
   // ---------- district zoom ----------
   let focusZ = 0;
-  game.enterDistrict = function (d, quick) {
+  game.enterDistrict = function (d, quick, at) {
     if (!d) return;
     R.focus = d;
     const v = districtView(d);
     focusZ = v.z;
+    // an incident (or any spot) can be the centre of the view instead of the lots
+    if (at) { v.z = Math.max(v.z, 0.16); focusZ = v.z; v.x = at.x - 20 / v.z; v.y = at.y + 10 / v.z; }
     flyTo(v.x, v.y, v.z, quick ? 0.6 : 0.9);
     ui.profile(d);
     ui.update();
@@ -98,6 +100,7 @@
   };
   game.exitDistrict = function (noFly) {
     if (!R.focus) return;
+    CP.closeZoneCard();
     R.focus = null;
     R.preview = null;
     ui.profile(null);
@@ -125,7 +128,7 @@
   function tryPlace(lot, rezone) {
     const type = ui.selected, spec = CP.BUILDINGS[type];
     const pv = sim.preview(type, lot, rezone);
-    if (!pv.allowed && !rezone && !pv.locked && !pv.protest && !lot.building) {
+    if (!pv.allowed && !rezone && !pv.locked && !pv.protest && !pv.blocked && !lot.building) {
       ui.toast(`${spec.name} can't go on a ${CP.ZONES[lot.zone].name} lot. Hold <b>Shift</b> and click to rezone it (+${CP.money(CP.REZONE.cost)}).`, "bad");
       CP.audio.error();
       return;
@@ -212,7 +215,6 @@
         R.floatText(d.label[0], d.label[1], `+${CP.money(m.grant)} grant`, "#4ef0a0", 0.4);
         return lines[(missions.done.length + i) % lines.length].replace("{title}", m.title).replace("{grant}", CP.money(m.grant));
       });
-      if (missions.unlocked) { missions.unlocked = false; pages.push(CP.STORY.lotsUnlocked); }
       if (missions.allDone()) pages.push(CP.STORY.allMissionsDone);
       if (ui.mission && completed.includes(ui.mission)) { ui.mission = null; R.highlight = null; }
       setTimeout(() => { if (!game.ended) ui.dcm(pages); }, 700);
@@ -221,11 +223,23 @@
   }
 
   // ---------- hover: ghost preview, cards, tooltips, residents ----------
-  let hoverRes = null, pinned = null, pinT = 0;
+  let hoverRes = null, pinned = null, pinT = 0, hoverLm = null;
   game.pinResident = function (r, secs) { pinned = r; pinT = secs || 7; };
+  // the spot under the cursor: a building you already placed, or (with a building selected) a free spot in the zoomed-in district
+  function spotLot(wx, wy, sx, sy) {
+    if (!R.focus) return null;
+    const placed = R.lotAt(sx, sy);
+    if (placed) return placed;
+    if (ui.selected && sim.districtAt(wx, wy) === R.focus) return sim.freeLot(R.focus, wx, wy);
+    return null;
+  }
+  // a zone is only interactable while its layer is switched on
+  const visibleZone = (x, y) => { const z = world.zoneAtPoint(x, y); return z && R.layers[z.kind] ? z : null; };
   function updateHover() {
     R.preview = null;
     R.hoverLot = null;
+    R.hoverCluster = null;
+    R.hoverZone = null;
     R.hoverWarn = false;
     if (!live() || !mouse.over || (mouse.down && mouse.dragged) || tween) {
       R.hoverDistrict = null;
@@ -237,7 +251,7 @@
     const [wx, wy] = R.toWorld(mouse.x, mouse.y);
     const d = sim.districtAt(wx, wy);
     hoverRes = res.pick(mouse.x, mouse.y);
-    const lot = R.focus ? R.lotAt(mouse.x, mouse.y) : null;
+    const lot = spotLot(wx, wy, mouse.x, mouse.y);
     R.hoverDistrict = d;
     if (ui.tab === "plan") ui.renderIndicators(d && d !== R.focus ? d : null);
     if (lot) {
@@ -250,6 +264,12 @@
       } else ui.tooltip(ui.lotTip(lot), mouse.x, mouse.y);
     } else if (hoverRes) {
       ui.hideTooltip();
+    } else if (!ui.selected && (hoverLm = R.landmarkAt(mouse.x, mouse.y))) {
+      ui.tooltip(`<div class="tt-h">${hoverLm.e} ${CP.esc(hoverLm.l.name)}</div>${hoverLm.l.blurb ? `<div class="muted">${CP.esc(hoverLm.l.blurb)}</div>` : ""}`, mouse.x, mouse.y);
+    } else if (R.focus && !ui.selected && d === R.focus && (R.hoverZone = visibleZone(wx, wy))) {
+      const z = R.hoverZone, zi = z.kind === "P" ? CP.ZONES.O : CP.ZONES[z.kind];
+      R.hoverCluster = world.clusterAt(wx, wy, R.focus);
+      ui.tooltip(`<div class="tt-h">${zi.icon} ${z.kind === "P" ? "Park" : zi.name + " zone"} · ${CP.esc(d.name)}</div><div class="muted">${(z.area / 1e6).toFixed(1)} km²${R.hoverCluster ? " · " + R.hoverCluster.label : ""}${z.rezoned ? " · rezoned by you" : ""}</div><div class="muted"><b>Click</b> to inspect${z.kind === "P" ? "" : ", remove buildings or rezone"}.</div>`, mouse.x, mouse.y);
     } else if (d && d !== R.focus) {
       if (ui.selected) {
         R.hoverWarn = !sim.canAfford(sim.baseCost(ui.selected, d));
@@ -335,6 +355,7 @@
       if (e.key === "Escape") {
         if (!game.started && game.phase !== "title") return skipIntro();
         if (game.userPaused) return game.togglePause(false);
+        if (CP.zoneCardOpen()) return CP.closeZoneCard();
         if (ui.selected) { ui.select(null); return updateHover(); }
         if (R.focus) return game.exitDistrict();
         pinned = null;
@@ -361,18 +382,60 @@
 
   function click(x, y, shift) {
     const [wx, wy] = R.toWorld(x, y);
-    const lot = R.focus ? R.lotAt(x, y) : null;
+    const lot = spotLot(wx, wy, x, y);
     if (lot) {
       if (ui.selected) return tryPlace(lot, shift);
-      if (!lot.building) { ui.setTab("build"); return ui.toast(`${CP.ZONES[lot.zone].icon} ${CP.ZONES[lot.zone].name} lot. Pick a building to place here.`); }
       return;
     }
     const r = res.pick(x, y);
     if (r) { game.pinResident(r, 7); CP.audio.click(); return; }
+    if (R.focus && !ui.selected && sim.districtAt(wx, wy) === R.focus) {
+      const z = visibleZone(wx, wy);
+      if (z) { CP.audio.click(); return CP.zoneCard(z, world.clusterAt(wx, wy, R.focus)); }
+    }
     const d = sim.districtAt(wx, wy);
     if (d && d !== R.focus) return game.enterDistrict(d);
     if (!d && R.focus) return game.exitDistrict();
   }
+
+  // remove an existing cluster (called from its card)
+  game.removeCluster = function (cl) {
+    const before = sim.overall();
+    const out = sim.removeCluster(cl);
+    if (!out.ok) { ui.toast(out.why, "bad"); CP.audio.error(); return out; }
+    R.dust(cl.x, cl.y);
+    R.burst(cl.x, cl.y, "💥", 4, { spread: 260, size: 26 });
+    CP.audio.destroy();
+    let n = 0;
+    CP.DOMAINS.forEach((dm, i) => {
+      const a = CP.bandOf(out.before[i]), c = CP.bandOf(out.after[i]);
+      if (a !== c) R.floatText(cl.x, cl.y, `${dm.icon} ${a.name} → ${c.name}`, c.color, 0.6 * ++n);
+    });
+    ui.toast(`${out.k.icon} <b>${out.k.name}</b> removed in ${CP.esc(cl.d.name)}. The land is clear: pick a building and click there to build (−${CP.money(out.k.cost)}).`, "", 6000);
+    complain(cl.d, cl.kind === "R" ? "demolish" : "rezone");
+    afterChange(before);
+    updateHover();
+    return out;
+  };
+
+  game.rezoneZone = function (zone, toKind) {
+    const before = sim.overall();
+    const out = sim.rezoneZone(zone, toKind, R.focus);
+    if (!out.ok) { ui.toast(out.why, "bad"); CP.audio.error(); return out; }
+    const nc = out.cluster;
+    R.dust(nc.x, nc.y);
+    CP.audio.destroy();
+    let n = 0;
+    CP.DOMAINS.forEach((dm, i) => {
+      const a = CP.bandOf(out.before[i]), c = CP.bandOf(out.after[i]);
+      if (a !== c) R.floatText(nc.x, nc.y, `${dm.icon} ${a.name} → ${c.name}`, c.color, 0.6 * ++n);
+    });
+    ui.toast(`${CP.ZONES[toKind].icon} Zone rezoned to <b>${CP.ZONES[toKind].name}</b> in ${CP.esc(out.d.name)} (−${CP.money(out.cost)}). A new ${nc.label.toLowerCase()} is going up.`, "", 6500);
+    complain(out.d, "rezone");
+    afterChange(before);
+    updateHover();
+    return out;
+  };
 
   // ---------- pause ----------
   game.togglePause = function (force) {
@@ -504,8 +567,7 @@
     // time-limited contracts
     for (const m of missions.tick(dt)) ui.toast(`⏱ The bonus contract "${CP.esc(m.title)}" ran out of time.`, "bad"), ui.update();
     // random events
-    const ev = events.tick(game.elapsed);
-    if (ev) onEvent(ev);
+    events.tick(game.elapsed, dt);
     // undo window
     if (lastPlaced) {
       lastPlaced.t -= dt;
@@ -515,15 +577,41 @@
     ui.tick(game.timeLeft);
     if (game.timeLeft <= 0) endTerm();
   }
-  function onEvent(ev) {
+  // a disaster (or good news) has just started
+  function onEvent(inc) {
     const before = sim.overall();
+    if (inc.good) {
+      CP.audio.fanfare();
+      R.confetti();
+      ui.banner(`<span class="big">${inc.t.icon}</span> <b>${inc.t.name}${inc.d && inc.key === "festival" ? " in " + CP.esc(inc.d.name) : ""}</b>: ${CP.esc(inc.text)}`, "good");
+      ui.update();
+      afterChange(before);
+      return;
+    }
     CP.audio.alarm();
-    R.flash(ev.d);
-    R.burst(ev.d.label[0], ev.d.label[1], ev.t.icon, 6, { spread: 260, size: 30 });
-    ui.banner(`<span class="big">${ev.t.icon}</span> <b>${ev.t.name} in ${CP.esc(ev.d.name)}</b>: ${CP.esc(ev.text)}
-      <div class="small">${CP.DOMAINS[ev.t.metric].icon} ${CP.DOMAINS[ev.t.metric].label} fell ${CP.bandOf(ev.before).name} → ${CP.bandOf(ev.after).name}. Build a <b>${ev.fix}</b> there to recover.</div>`, "event");
-    complain(ev.d, "event", `${ev.t.icon} ${ev.text} We need help, Director!`);
+    R.flash(inc.d);
+    if (inc.key === "earthquake") R.shake = 1.5;
+    ui.banner(`<span class="big">${inc.t.icon}</span> <b>${inc.t.name} in ${CP.esc(inc.d.name)}</b> <span class="small">−${CP.money(inc.dmg)}/min. Build a ${inc.fix}, or send crews.</span>`, "event");
+    complain(inc.d, "event", `${inc.t.icon} ${inc.text} We need help, Director!`);
+    ui.update();
     afterChange(before);
+  }
+  function onResolve(inc, how) {
+    if (inc.good) { ui.renderEvents(); return; }
+    CP.audio.fanfare();
+    R.burst(inc.x, inc.y, "✅", 5, { spread: 240, size: 28 });
+    ui.toast(`✅ <b>${inc.t.name}</b> in ${CP.esc(inc.d.name)} is under control (${how === "crews" ? "emergency crews" : "your new building"}).${inc.bonus ? ` Quick-response bonus <b>+${CP.money(inc.bonus)}</b>.` : ""}`, "good", 6000);
+    ui.update();
+    ui.renderEvents();
+  }
+  function onEscalate(inc) {
+    CP.audio.alarm();
+    if (inc.key === "earthquake") R.shake = 1.2;
+    R.flash(inc.d, "#ff2a4a");
+    ui.banner(`<span class="big">🚨</span> <b>The ${inc.t.name.toLowerCase()} in ${CP.esc(inc.d.name)} is escalating!</b>
+      <div class="small">It grew${inc.spreadTo ? ` and spread to ${CP.esc(inc.spreadTo.name)}` : ""}, now costs ${CP.money(inc.dmg)}/min and hurts ${CP.DOMAINS[inc.t.m2].label}. Respond now.</div>`, "event");
+    ui.update();
+    ui.renderEvents();
   }
   function endTerm() {
     game.ended = true;
@@ -564,7 +652,7 @@
       clampCam();
       if (moved) updateHover();
     }
-    if (!game.paused && !game.userPaused && !game.ended) res.update(dt);
+    if (!game.paused && !game.userPaused && !game.ended) { res.update(dt); CP.traffic.update(dt, R.dayFrac); }
     stepTerm(dt);
     R.draw(dt);
     stepIntro(dt);
@@ -588,7 +676,7 @@
     if (h.has("notips")) ui.tut.on = false;
     skipIntro();
     if (h.has("t")) game.timeLeft = +h.get("t");
-    if (h.has("event")) setTimeout(() => onEvent(events.fire(h.get("event"))), 1200);
+    if (h.has("event")) setTimeout(() => events.fire(h.get("event")), 1200);
     if (h.has("go")) setTimeout(() => {
       const m = missions.active[0];
       game.goMission(m);
@@ -606,9 +694,13 @@
       world.build();
       sim.initWorld();
       sim.recompute();
+      CP.traffic.init();
       res.init();
       missions.init();
       events.init();
+      events.onFire = onEvent;
+      events.onResolve = onResolve;
+      events.onEscalate = onEscalate;
       ui.init();
       setupIntro();
       bindInput();

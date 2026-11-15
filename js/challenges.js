@@ -40,7 +40,7 @@
   function queue() {
     const busy = new Set(missions.active.map((m) => m.d));
     const key = (d) => d.overall + 15 * (districtUse.get(d) || 0);
-    return sim.districts.filter((d) => !busy.has(d) && d.lots.some((l) => !sim.isLocked(l) && !l.building)).sort((a, b) => key(a) - key(b));
+    return sim.districts.filter((d) => !busy.has(d)).sort((a, b) => key(a) - key(b));
   }
   const fmtPair = (w) => `${CP.fmtIndicator(w.ind, w.v)} (Calgary ${CP.fmtIndicator(w.ind, w.avg)})`;
 
@@ -175,7 +175,6 @@
     }
     if (completed.length) {
       const tier = Math.floor(missions.done.length / M.unlockEvery);
-      if (tier > sim.unlockedTier) { sim.unlockedTier = tier; missions.unlocked = true; }
       refill();
     }
     return completed;

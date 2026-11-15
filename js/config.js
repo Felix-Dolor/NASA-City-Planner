@@ -27,7 +27,7 @@
     timedBonus: 1.6, // grant multiplier on bonus contracts
     unlockEvery: 2, // locked lots open after every N completed contracts
   };
-  CP.EVENTS = { count: 3, from: 0.2, to: 0.85 }; // random events per term, spread between 20% and 85% of the term
+  CP.EVENTS = { count: 4, good: 0, from: 0.15, to: 0.85, escalateAfter: 1e9, quickBonus: { within: 0, money: 0 } }; // disasters + good-news events per term, spread across the term
 
   // ---------- equity bands ----------
   // Every score is 0-100 (higher = more equitable). Each band also has a symbol so it never relies on colour alone.
@@ -204,6 +204,23 @@
       area: { r: 1800, gain: E(0, 0, 0, -10, 0, 0), what: "odour" },
       relates: ["flood_susceptibility", "diabetes_agestd_perc"], risk: "Nobody wants to live next to it: lower Belonging nearby" },
   };
+  // Existing zone clusters you can remove (their effects are already inside the real CEI ratings, so removing one
+  // SUBTRACTS what it gave the district). Removal frees a lot on that land. gain = own district, area = effect circle.
+  CP.CLUSTER_KINDS = {
+    I: { name: "Industrial plant", icon: "🏭", cost: 6, income: -1.0, traffic: -0.25,
+      why: "Gives the district jobs, but its smoke and trucks reach the homes nearby.",
+      gain: E(-14, 0, 0, 0, 0, 0), area: { r: 2200, gain: E(0, 0, 14, 4, 0, 16), what: "cleaner air for nearby homes" },
+      note: "Clears the land. You lose the plant's jobs and tax." },
+    R: { name: "Existing residential", icon: "🏘️", cost: 8, income: -0.4, traffic: -0.1,
+      why: "Existing homes for local families. Taking them down displaces residents.",
+      gain: E(-3, 0, 0, -12, -6, 3), area: null,
+      note: "Clears the land for something else. Families are displaced, which hurts Belonging and Wellbeing." },
+    C: { name: "Shopping / business centre", icon: "🏬", cost: 5, income: -0.8, traffic: -0.15,
+      why: "Shops, services and jobs. Removing it frees land but costs the district its local economy.",
+      gain: E(-12, -12, 0, 0, 0, 0), area: null,
+      note: "Clears the land. You lose local jobs, shops and tax." },
+  };
+  CP.ZONE_REZONE = { cost: 7 }; // $M to rezone a whole zone to another land use (plus the goodwill hit in CP.REZONE)
   // in the Build list, most useful first
   CP.BUILD_ORDER = ["clinic", "grocery", "community", "park", "childcare", "library", "school", "jobs", "transit", "hospital", "factory", "wastewater", "datacentre"];
   CP.HOUSE_ICON = "🏠";
@@ -356,23 +373,33 @@
   // ---------- random events ----------
   // Each drops one metric in one district by a full band. Placing a matching building there recovers it.
   // weight: real indicator used to pick where it strikes (higher value = more likely).
+  // Disasters stay on the map until they are dealt with. r = affected radius (m), dmg = $M/min the city loses while it burns,
+  // close = radius of roads shut, cost = what emergency crews charge to end it at once, m2 = a second metric that drops if
+  // it is left for too long, spread = the neighbouring district is hit too when it escalates.
   CP.EVENT_TYPES = {
-    flood: { name: "Flood", icon: "🌊", metric: 5, fix: ["park", "wastewater"], weight: "flood_susceptibility", trait: "flood",
-      text: "{river} has burst its banks in {d}. Homes are flooded." },
-    fire: { name: "House fire", icon: "🔥", metric: 3, fix: ["community", "clinic"],
-      text: "A house fire in {d} has left families without a home." },
-    storm: { name: "Storm", icon: "⛈️", metric: 1, fix: ["community", "grocery"],
-      text: "A summer storm knocked out power and roads in {d}." },
-    tornado: { name: "Tornado", icon: "🌪️", metric: 4, fix: ["community", "school"],
-      text: "A tornado touched down in {d}. Families need support." },
-    rain: { name: "Heavy rain", icon: "🌧️", metric: 5, fix: ["wastewater", "park"], weight: "flood_susceptibility",
-      text: "Heavy rain flooded basements across {d}." },
-    lightning: { name: "Lightning", icon: "⚡", metric: 0, fix: ["jobs", "factory"],
+    flood: { name: "Flood", icon: "🌊", metric: 5, m2: 0, fix: ["park", "wastewater"], weight: "flood_susceptibility", trait: "flood", r: 2600, dmg: 0.5, close: 2400, cost: 5, spread: true,
+      text: "{river} has burst its banks in {d}. Homes and underpasses are under water." },
+    fire: { name: "House fire", icon: "🔥", metric: 3, m2: 2, fix: ["community", "clinic"], r: 700, dmg: 0.35, close: 800, cost: 3, spread: true,
+      text: "A house fire in {d} is spreading between homes. Families are out on the street." },
+    storm: { name: "Hailstorm", icon: "⛈️", metric: 1, m2: 0, fix: ["community", "grocery"], r: 3200, dmg: 0.3, close: 1200, cost: 3,
+      text: "A hailstorm hit {d}. Power lines are down and shops are shut." },
+    tornado: { name: "Tornado", icon: "🌪️", metric: 4, m2: 3, fix: ["community", "school"], r: 1600, dmg: 0.6, close: 1800, cost: 6, spread: true,
+      text: "A tornado has touched down in {d}. Whole streets are damaged." },
+    rain: { name: "Heavy rain", icon: "🌧️", metric: 5, m2: 2, fix: ["wastewater", "park"], weight: "flood_susceptibility", r: 3000, dmg: 0.25, close: 1500, cost: 3,
+      text: "Heavy rain is flooding basements across {d}." },
+    lightning: { name: "Lightning strike", icon: "⚡", metric: 0, m2: 1, fix: ["jobs", "factory"], r: 900, dmg: 0.3, close: 0, cost: 2,
       text: "Lightning knocked out power to businesses in {d}. Shops are closed." },
-    earthquake: { name: "Earthquake", icon: "🌍", metric: 2, fix: ["clinic", "hospital"],
-      text: "A rare tremor shook {d}. People were injured." },
-    collapse: { name: "Building collapse", icon: "🏚️", metric: 4, fix: ["school", "community"],
-      text: "A badly built apartment block collapsed in {d}." },
+    earthquake: { name: "Earthquake", icon: "🌍", metric: 2, m2: 4, fix: ["clinic", "hospital"], r: 2400, dmg: 0.6, close: 2000, cost: 6, spread: true,
+      text: "A rare earthquake shook {d}. People are injured and roads have cracked." },
+    collapse: { name: "Building collapse", icon: "🏚️", metric: 4, m2: 2, fix: ["school", "community"], r: 600, dmg: 0.4, close: 700, cost: 3,
+      text: "A badly built apartment block collapsed in {d}. Rescuers are on site." },
+  };
+  // good news arrives too: it rewards a well-run city and adds variety
+  CP.GOOD_EVENTS = {
+    festival: { name: "Stampede festival", icon: "🎪", metric: 3, boost: 12, seconds: 40, r: 1800,
+      text: "A street festival is running in {d}. Belonging is up while it lasts, but expect traffic." },
+    grant: { name: "Federal grant", icon: "💰", money: 8, seconds: 20, r: 0,
+      text: "Ottawa approved an infrastructure grant. $8M has landed in your budget." },
   };
 
   // ---------- story ----------

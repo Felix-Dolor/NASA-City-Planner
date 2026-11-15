@@ -47,24 +47,86 @@
   G.rivers.forEach((r) => (r.path = linePath(r.line)));
   G.lakes.forEach((l) => (l.path = polyPath(l.poly)));
   G.bigParks.forEach((l) => (l.path = polyPath(l.poly)));
-  G.roads.forEach((r) => (r.path = linePath(r.line)));
-  G.ctrain.forEach((r) => (r.path = linePath(r.line)));
+  // roads and tracks are merged into one Path2D per class, so a frame needs only a handful of strokes
+  const merge = (list, mk) => {
+    const p = new Path2D();
+    for (const r of list) p.addPath(mk(r));
+    return p;
+  };
+  // roads are grouped into 4 km tiles so a frame only strokes the tiles that are on screen
+  const TILE = 4000;
+  G.roadTiles = new Map();
+  for (const r of G.roads) {
+    const mid = r.line[Math.floor(r.line.length / 2)];
+    const key = Math.floor(mid[0] / TILE) + "," + Math.floor(mid[1] / TILE);
+    let t = G.roadTiles.get(key);
+    if (!t) G.roadTiles.set(key, (t = { 2: new Path2D(), 3: new Path2D(), bb: [Infinity, Infinity, -Infinity, -Infinity] }));
+    t[r.cls === 3 ? 3 : 2].addPath(linePath(r.line));
+    t.bb = [Math.min(t.bb[0], r.bb[0]), Math.min(t.bb[1], r.bb[1]), Math.max(t.bb[2], r.bb[2]), Math.max(t.bb[3], r.bb[3])];
+  }
+  G.roads.forEach((r) => { if (!r.cls) r.path = linePath(r.line); }); // hand-traced fallback roads only
+  G.ctrainPath = merge(G.ctrain, (r) => linePath(r.line));
+  for (const l of G.landuse) { l.kind = l.z; l.path = polyPath(l.poly); }
+  world.polyPath = polyPath;
   G.airportPath = polyPath(G.airport);
 
   // ---------- spatial queries ----------
+  const inBB = (bb, x, y, pad) => !bb || (x >= bb[0] - pad && x <= bb[2] + pad && y >= bb[1] - pad && y <= bb[3] + pad);
   world.waterAt = function (x, y, pad) {
     pad = pad || 0;
-    for (const r of G.rivers) if (CP.distToLine(x, y, r.line) < r.width / 2 + pad) return true;
-    for (const l of G.lakes) if (CP.pointInPoly(x, y, l.poly)) return true;
+    for (const r of G.rivers) if (inBB(r.bb, x, y, r.width + pad) && CP.distToLine(x, y, r.line) < r.width / 2 + pad) return true;
+    for (const l of G.lakes) if (inBB(l.bb, x, y, 0) && CP.pointInPoly(x, y, l.poly)) return true;
     return false;
   };
   world.bigParkAt = function (x, y) {
-    for (const l of G.bigParks) if (CP.pointInPoly(x, y, l.poly)) return l;
+    for (const l of G.bigParks) if (inBB(l.bb, x, y, 0) && CP.pointInPoly(x, y, l.poly)) return l;
     return null;
   };
   world.highwayAt = function (x, y, pad) {
-    for (const r of G.roads) if (CP.distToLine(x, y, r.line) < r.w / 2 + (pad || 0)) return r;
+    pad = pad || 0;
+    for (const r of G.roads) if (inBB(r.bb, x, y, r.w + pad) && CP.distToLine(x, y, r.line) < r.w / 2 + pad) return r;
     return null;
+  };
+
+  // ---------- land-use raster: which zone is at any point ----------
+  // Every OSM land-use polygon is painted once onto an 80 m grid (R/C/I, then parks, then water on top), so
+  // zoneAt() is a single array lookup. Codes: 0 none, 1 residential, 2 commercial, 3 industrial, 4 park, 5 water.
+  const CODE_OF = { R: 1, C: 2, I: 3 };
+  const ZG = 80, ZB = D.bounds;
+  const ZW = Math.ceil((ZB[2] - ZB[0] + 6000) / ZG), ZH = Math.ceil((ZB[3] - ZB[1] + 6000) / ZG);
+  const zx0 = ZB[0] - 3000, zy0 = ZB[1] - 3000;
+  const zoneGrid = new Uint8Array(ZW * ZH);
+  (function paintZones() {
+    const c = document.createElement("canvas");
+    c.width = ZW; c.height = ZH;
+    const g = c.getContext("2d", { willReadFrequently: true });
+    g.imageSmoothingEnabled = false;
+    g.setTransform(1 / ZG, 0, 0, 1 / ZG, -zx0 / ZG, -zy0 / ZG);
+    const paint = (path, code) => { g.fillStyle = `rgb(${code},0,0)`; g.fill(path); };
+    for (const l of G.landuse) paint(l.path, CODE_OF[l.z]);
+    for (const l of G.bigParks) paint(l.path, 4);
+    G.lakes.forEach((l) => paint(l.path, 5));
+    g.strokeStyle = "rgb(5,0,0)";
+    for (const r of G.rivers) { g.lineWidth = Math.max(r.width, ZG); g.stroke(r.path); }
+    const px = g.getImageData(0, 0, ZW, ZH).data;
+    for (let i = 0; i < zoneGrid.length; i++) zoneGrid[i] = px[i * 4 + 3] < 128 ? 0 : Math.round(px[i * 4] / 1);
+  })();
+  const ZONE_CODE = ["", "R", "C", "I", "P", "W"];
+  world.zoneAt = function (x, y) {
+    const cx = Math.floor((x - zx0) / ZG), cy = Math.floor((y - zy0) / ZG);
+    if (cx < 0 || cy < 0 || cx >= ZW || cy >= ZH) return "";
+    return ZONE_CODE[zoneGrid[cy * ZW + cx]] || "";
+  };
+  // share of residential / commercial / industrial / park land in a square around a point (for traffic and stats)
+  world.zoneMix = function (x, y, r) {
+    const out = { R: 0, C: 0, I: 0, P: 0, W: 0, n: 0 };
+    for (let yy = y - r; yy <= y + r; yy += ZG * 2)
+      for (let xx = x - r; xx <= x + r; xx += ZG * 2) {
+        const z = world.zoneAt(xx, yy);
+        out.n++;
+        if (z) out[z]++;
+      }
+    return out;
   };
 
   // ---------- satellite terrain (pixel-level, fast) ----------
@@ -86,38 +148,25 @@
     const c = makeCanvas(W, H);
     const ctx = c.getContext("2d");
     ctx.setTransform(1 / mpp, 0, 0, 1 / mpp, -x0 / mpp, -y0 / mpp);
-    D.tracts.forEach((t) => {
-      const dens = CP.clamp(t.average_walkscore / 100, 0, 1);
-      const green = CP.clamp(t.park_area_perc / 60 + t.tree_canopy / 80, 0, 1);
-      // suburbs: soft sage; dense core: warm grey; leafy or park-heavy: greener
-      const r = CP.lerp(CP.lerp(196, 214, dens), 150, green * 0.6);
-      const g = CP.lerp(CP.lerp(206, 206, dens), 190, green * 0.6);
-      const bl = CP.lerp(CP.lerp(170, 196, dens), 140, green * 0.6);
-      ctx.fillStyle = `rgb(${r | 0},${g | 0},${bl | 0})`;
-      ctx.fill(t.path);
-      ctx.strokeStyle = ctx.fillStyle;
-      ctx.lineWidth = mpp * 1.5; // seal hairline gaps between tracts
-      ctx.stroke(t.path);
-    });
+    ctx.fillStyle = world.GROUND;
+    ctx.strokeStyle = world.GROUND;
+    ctx.lineWidth = mpp * 1.5; // seal hairline gaps between tracts
+    D.tracts.forEach((t) => { ctx.fill(t.path); ctx.stroke(t.path); });
     drawVectorTerrain(ctx, mpp);
     return { canvas: c, x0, y0, mpp, W, H };
   }
 
+  // Flat-colour land use drawn once into the terrain canvas: zones, parks, water, then roads on top.
+  world.GROUND = "#ebe9e1";
+  world.ZONE_FILL = { R: "#f7e7a8", C: "#f6b9c6", I: "#d3c4f3" };
+  world.PARK_FILL = "#b4e0a4";
+  world.WATER_FILL = "#82c0ea";
   function drawVectorTerrain(ctx, mpp) {
     ctx.lineCap = ctx.lineJoin = "round";
-    // parks are clipped to the city so rough outlines don't spill into farmland
-    ctx.save();
-    const city = new Path2D();
+    const city = (world.cityPath = new Path2D());
     D.tracts.forEach((t) => city.addPath(t.path));
-    ctx.clip(city);
-    G.bigParks.forEach((p) => {
-      ctx.fillStyle = "#8cc276";
-      ctx.fill(p.path);
-    });
-    ctx.restore();
     ctx.fillStyle = "rgba(150,150,150,0.55)";
     ctx.fill(G.airportPath);
-    // runways
     const [ax, ay] = CP.project(51.128, -114.02);
     ctx.strokeStyle = "#555a60";
     ctx.lineWidth = 60;
@@ -125,30 +174,27 @@
       ctx.beginPath(); ctx.moveTo(ax + a, ay + b); ctx.lineTo(ax + c, ay + d); ctx.stroke();
     });
     G.rivers.forEach((r) => {
-      ctx.strokeStyle = "#2b6f9c";
-      ctx.lineWidth = Math.max(r.width * 1.6, mpp * 2.5);
-      ctx.stroke(r.path);
-      ctx.strokeStyle = "#3f8fc2";
-      ctx.lineWidth = Math.max(r.width, mpp * 1.5);
+      ctx.strokeStyle = world.WATER_FILL;
+      ctx.lineWidth = Math.max(r.width * 1.2, mpp * 1.6);
       ctx.stroke(r.path);
     });
-    G.lakes.forEach((l) => {
-      ctx.fillStyle = "#357fb0";
-      ctx.fill(l.path);
-    });
-    G.roads.forEach((r) => {
-      ctx.strokeStyle = "rgba(70,70,74,0.9)";
-      ctx.lineWidth = Math.max(r.w * 1.6, mpp * 2);
-      ctx.stroke(r.path);
-      ctx.strokeStyle = "rgba(235,225,200,0.9)";
-      ctx.lineWidth = Math.max(r.w * 0.6, mpp * 0.8);
-      ctx.stroke(r.path);
-    });
+    G.lakes.forEach((l) => { ctx.fillStyle = world.WATER_FILL; ctx.fill(l.path); });
+    // road network, quiet: thin white streets, wider arterials, amber freeways
+    const road = (path, casing, fill, wc, wf) => {
+      ctx.strokeStyle = casing; ctx.lineWidth = Math.max(wc, mpp * 1.4); ctx.stroke(path);
+      ctx.strokeStyle = fill; ctx.lineWidth = Math.max(wf, mpp * 0.9); ctx.stroke(path);
+    };
+    for (const t of G.roadTiles.values()) {
+      road(t[2], "rgba(90,90,100,0.7)", "#ffffff", 34, 22);
+      road(t[3], "rgba(90,70,30,0.8)", "#ffc857", 48, 32);
+    }
+    // C-Train
+    ctx.strokeStyle = "#d71920"; ctx.lineWidth = Math.max(26, mpp * 1.6); ctx.stroke(G.ctrainPath);
   }
 
   function buildFarTerrain() {
     const R = world.PLANET_R;
-    const mpp = 110;
+    const mpp = 200;
     const W = Math.ceil((2 * R) / mpp);
     const c = makeCanvas(W, W);
     const ctx = c.getContext("2d");
@@ -181,7 +227,7 @@
           const edge = (wx - fx * 800 < 110 || wy - fy * 800 < 110);
           if (edge) col = [col[0] * 0.97, col[1] * 0.97, col[2] * 0.96];
         }
-        const k = 1;
+        const k = 1.14;
         px[o] = col[0] * k; px[o + 1] = col[1] * k; px[o + 2] = col[2] * k; px[o + 3] = 255;
       }
     ctx.putImageData(img, 0, 0);
@@ -244,50 +290,254 @@
     return false;
   };
 
-  world.cell = function (bx, by) {
-    const key = bx * 4096 + by;
-    let c = cache.get(key);
-    if (c) return c;
-    const B = world.CELL;
-    const rand = CP.rng(bx * 92821 + by * 68917 + 7);
-    const cx = (bx + 0.3 + rand() * 0.4) * B, cy = (by + 0.3 + rand() * 0.4) * B;
-    const t = sim.tractAt(cx, cy);
-    c = { cx, cy, t, items: [], ground: null };
-    cache.set(key, c);
-    if (!t) return c;
-    if (world.waterAt(cx, cy, 170)) { c.ground = "water"; return c; }
-
-    const h = rand();
-    const bigPark = world.bigParkAt(cx, cy);
-    const isPark = bigPark || CP.hash(bx, by, 11) < (t.park_area_perc / 100) * 0.9;
-    const cls = isPark ? "park" : classify(t, h);
-    c.cls = cls;
-    c.ground = cls === "park" ? "park" : cls === "industrial" ? "lot" : cls === "house" ? "lawn" : "plaza";
-    const canopy = t.tree_canopy / 100;
-    const tree = (x, y) => {
-      for (const r of world.reserved) if (CP.dist(r[0], r[1], x, y) < r[2]) return;
-      if (!world.waterAt(x, y, 60) && !world.highwayAt(x, y, 60)) c.items.push({ type: "tree", x, y, s: 42 + rand() * 30, hue: rand() });
-    };
+  // ---------- zone clusters ----------
+  // Instead of scattering buildings, each real land-use polygon gets a few compact, recognisable clusters:
+  //   residential -> a neighbourhood block of houses (towers/midrises where the tract is dense),
+  //   commercial  -> a business/shopping centre (towers downtown, shops in the suburbs),
+  //   industrial  -> a plant: one big factory with stacks plus a few sheds,
+  //   parks       -> a grove of trees.
+  // The rest of the zone stays flat colour, so the map reads as zones with a few landmarks, not as noise.
+  const CODE = { R: 1, C: 2, I: 3 };
+  const polyArea = (poly) => {
+    let a = 0;
+    for (let i = 0; i < poly.length; i++) { const p = poly[i], q = poly[(i + 1) % poly.length]; a += p[0] * q[1] - q[0] * p[1]; }
+    return Math.abs(a) / 2;
+  };
+  world.clusters = [];
+  const cellItems = new Map();
+  const homeSites = [];
+  const SITE_CELL = (x, y) => Math.floor(x / world.CELL) * 4096 + Math.floor(y / world.CELL);
+  let curKind = null;
+  let curItems = null; // the cluster currently being built collects its own items (so it can be removed later)
+  function pushItem(it) {
+    if (world.waterAt(it.x, it.y, 60) || world.highwayAt(it.x, it.y, 80) || isReserved(it.x, it.y)) return false;
+    const k = SITE_CELL(it.x, it.y);
+    let l = cellItems.get(k);
+    if (!l) cellItems.set(k, (l = []));
+    l.push(it);
+    if (curKind) it.zk = curKind; // which zone layer this belongs to (for the layer toggles)
+    if (curItems) curItems.push(it);
+    return true;
+  }
+  function anchors(poly, bb, kind, n, sep) {
+    const cands = [];
+    const cx = poly.reduce((a, p) => a + p[0], 0) / poly.length, cy = poly.reduce((a, p) => a + p[1], 0) / poly.length;
+    for (let x = bb[0]; x <= bb[2]; x += 250)
+      for (let y = bb[1]; y <= bb[3]; y += 250)
+        if (world.zoneAt(x, y) === kind && world.zoneAt(x + 120, y) === kind && world.zoneAt(x - 120, y) === kind && world.zoneAt(x, y + 120) === kind && world.zoneAt(x, y - 120) === kind && sim.tractAt(x, y)) cands.push([x, y]);
+    cands.sort((a, b) => CP.dist(a[0], a[1], cx, cy) - CP.dist(b[0], b[1], cx, cy));
+    const got = [];
+    for (const c of cands) {
+      if (got.length >= n) break;
+      if (got.every((g) => CP.dist(g[0], g[1], c[0], c[1]) > sep)) got.push(c);
+    }
+    return got;
+  }
+  // one compact cluster of buildings of a given kind at (x, y); size = how many nearby clusters were merged into it
+  // (bigger groups get a bigger block). Returns { label, r } where r is its footprint radius in metres.
+  function genCluster(kind, x, y, t, rand, size) {
+    size = size || 1;
     const pick = (arr) => arr[Math.floor(rand() * arr.length)];
+    const walk = t.average_walkscore, transit = t.average_transitscore, canopy = t.tree_canopy / 100;
+    if (kind === "R") {
+      // existing residential: a block of homes; merged neighbourhoods become one bigger block
+      const cols = Math.min(6, 3 + Math.floor(size * 0.8)), rows = size > 3 ? 3 : 2;
+      for (let i = 0; i < cols; i++)
+        for (let j = 0; j < rows; j++) {
+          const hx = x + (i - (cols - 1) / 2) * 190 + (rand() - 0.5) * 30, hy = y + (j - (rows - 1) / 2) * 190 + (rand() - 0.5) * 30;
+          const k = walk > 84 && rand() < 0.5 ? "tower" : walk > 68 && rand() < 0.5 ? "midrise" : "house";
+          const base = { type: "amb", kind: k, x: hx, y: hy };
+          if (k === "house") Object.assign(base, { wall: pick(WALLS), roof: pick(ROOFS), h: 11 + rand() * 4 });
+          else if (k === "midrise") Object.assign(base, { wall: pick(WALLS), h: 30 + rand() * 28 });
+          else Object.assign(base, { wall: pick(GLASS), h: 70 + rand() * 70 });
+          pushItem(base);
+        }
+      for (let i = 0; i < Math.round(canopy * 3 + size); i++) pushItem({ type: "tree", x: x + (rand() - 0.5) * cols * 190, y: y + (rand() - 0.5) * rows * 190, s: 42 + rand() * 30, hue: rand() });
+      return { label: "Existing residential", r: Math.max(420, (cols * 190) / 2 + 170) };
+    }
+    if (kind === "C") {
+      const down = walk > 86 && transit > 70;
+      const cols = Math.min(4, 2 + Math.floor(size / 2));
+      for (let i = 0; i < cols; i++)
+        for (let j = 0; j < 2; j++) {
+          const hx = x + (i - (cols - 1) / 2) * 240, hy = y + (j - 0.5) * 220;
+          const k = down ? (rand() < 0.6 ? "tower" : "midrise") : walk > 62 ? (rand() < 0.6 ? "midrise" : "shops") : "shops";
+          const it = { type: "amb", kind: k, x: hx, y: hy };
+          if (k === "tower") Object.assign(it, { wall: pick(GLASS), h: 70 + rand() * 70 });
+          else if (k === "midrise") Object.assign(it, { wall: pick(WALLS), h: 30 + rand() * 28 });
+          else Object.assign(it, { wall: "#f0e4cc", roof: pick(["#e63946", "#2a9d8f", "#f4a261", "#457b9d"]) });
+          pushItem(it);
+        }
+      return { label: down ? "Business core" : walk > 62 ? "Mixed-use centre" : "Shopping centre", r: Math.max(400, (cols * 240) / 2 + 130) };
+    }
+    pushItem({ type: "amb", kind: "industrial", x, y, wall: "#c9c5bb", roof: "#8fa3b5", stack: true });
+    const sheds = [[-260, 40], [250, -30], [10, 240], [-30, -250], [300, 230]].slice(0, 2 + Math.min(3, size));
+    for (const [dx, dy] of sheds) pushItem({ type: "amb", kind: "industrial", x: x + dx, y: y + dy, wall: "#c9c5bb", roof: "#b0b4b8", stack: false });
+    return { label: "Industrial plant", r: 440 + (size > 1 ? 60 : 0) };
+  }
+  const KIND_LABEL = { R: "Existing residential", C: "Shopping centre", I: "Industrial plant" };
+  // a spot for a new cluster inside a zone: the most central open point, or its centroid
+  world.zoneAnchor = function (zone) {
+    const a = anchors(zone.poly, zone.bb, zone.kind, 1, 1);
+    if (a.length) return { x: a[0][0], y: a[0][1] };
+    return { x: zone.poly.reduce((s, p) => s + p[0], 0) / zone.poly.length, y: zone.poly.reduce((s, p) => s + p[1], 0) / zone.poly.length };
+  };
+  world.addCluster = function (kind, x, y, zone) {
+    const t = sim.tractAt(x, y) || D.tracts[0];
+    const cl = { id: world.clusters.length, kind, x, y, label: KIND_LABEL[kind], items: [], removed: false, zone, d: sim.districtAt(x, y) };
+    world.clusters.push(cl);
+    curItems = cl.items;
+    curKind = kind;
+    const g = genCluster(kind, x, y, t, CP.rng(cl.id * 97 + 5), 1);
+    cl.label = g.label;
+    cl.r = g.r;
+    curItems = null;
+    curKind = null;
+    if (zone) zone.clusters.push(cl);
+    return cl;
+  };
 
-    if (cls === "park") {
-      const n = Math.round(3 + canopy * 12 + (bigPark ? 3 : 0));
-      for (let i = 0; i < n; i++) tree(cx + (rand() - 0.5) * B * 0.8, cy + (rand() - 0.5) * B * 0.8);
-      return c;
+  function buildClusters() {
+    const rand = CP.rng(77);
+    const mk = (kind, x, y, label, zone) => {
+      const cl = { id: world.clusters.length, kind, x, y, label, items: [], removed: false, zone };
+      world.clusters.push(cl);
+      zone.clusters.push(cl);
+      curItems = cl.items;
+      curKind = kind;
+      return cl;
+    };
+    world.zones = G.landuse.concat(G.bigParks);
+    for (const z of world.zones) { z.clusters = []; if (!z.kind) z.kind = "P"; z.area = polyArea(z.poly); if (!z.path) z.path = world.polyPath(z.poly); }
+    // 1) every candidate anchor in every real zone polygon
+    const found = [];
+    for (const l of G.landuse) {
+      const area = l.area;
+      const cfg = l.z === "R" ? [0.3e6, 1.2e6, 3, 1500] : l.z === "C" ? [0.1e6, 0.6e6, 3, 1000] : [0.6e6, 3.0e6, 3, 1700];
+      if (area < cfg[0]) continue;
+      const n = Math.max(1, Math.min(cfg[2], Math.round(area / cfg[1])));
+      for (const [x, y] of anchors(l.poly, l.bb, l.z, n, cfg[3])) if (sim.tractAt(x, y)) found.push({ kind: l.z, x, y, zone: l });
     }
-    const clear = !world.highwayAt(cx, cy, 190) && !isReserved(cx, cy);
-    if (clear) {
-      if (cls === "house") c.items.push({ type: "amb", kind: "house", x: cx, y: cy, wall: pick(WALLS), roof: pick(ROOFS), h: 11 + rand() * 4 });
-      else if (cls === "midrise") c.items.push({ type: "amb", kind: "midrise", x: cx, y: cy, wall: pick(WALLS), h: 30 + rand() * 28 });
-      else if (cls === "tower") c.items.push({ type: "amb", kind: "tower", x: cx, y: cy, wall: pick(GLASS), h: 70 + rand() * 70 });
-      else if (cls === "shops") c.items.push({ type: "amb", kind: "shops", x: cx, y: cy, wall: "#f0e4cc", roof: pick(["#e63946", "#2a9d8f", "#f4a261", "#457b9d"]) });
-      else if (cls === "industrial") c.items.push({ type: "amb", kind: "industrial", x: cx, y: cy, wall: "#c9c5bb", roof: rand() < 0.5 ? "#8fa3b5" : "#b0b4b8", stack: rand() < 0.5 });
+    // 2) anchors of the same kind that sit close together become ONE group (one bigger cluster, one label)
+    const JOIN = { R: 2600, C: 1700, I: 2300 };
+    // bounded greedy grouping (not chained): each seed takes up to 3 unused neighbours of its kind within JOIN metres
+    const used = new Set();
+    const groups = new Map();
+    found.forEach((f, i) => {
+      if (used.has(i)) return;
+      used.add(i);
+      const g = [f];
+      for (let j = i + 1; j < found.length && g.length < 4; j++)
+        if (!used.has(j) && found[j].kind === f.kind && CP.dist(f.x, f.y, found[j].x, found[j].y) < JOIN[f.kind]) { g.push(found[j]); used.add(j); }
+      groups.set(i, g);
+    });
+    for (const g of groups.values()) {
+      const kind = g[0].kind;
+      const cx = g.reduce((a, f) => a + f.x, 0) / g.length, cy = g.reduce((a, f) => a + f.y, 0) / g.length;
+      // keep the centre on land of this kind: fall back to the member nearest the centre
+      const near = g.slice().sort((a, b) => CP.dist(a.x, a.y, cx, cy) - CP.dist(b.x, b.y, cx, cy))[0];
+      const ok = world.zoneAt(cx, cy) === kind && sim.tractAt(cx, cy);
+      const x = ok ? cx : near.x, y = ok ? cy : near.y;
+      const t = sim.tractAt(x, y);
+      if (!t) continue;
+      const cl = mk(kind, x, y, "", near.zone);
+      const res = genCluster(kind, x, y, t, rand, g.length);
+      cl.label = res.label;
+      cl.r = res.r;
+      cl.merged = g.length;
     }
-    const nTrees = cls === "house" ? Math.round(canopy * 14 + rand()) : cls === "industrial" ? 0 : Math.round(canopy * 6);
-    for (let i = 0; i < nTrees; i++) {
-      const a = rand() * 7, r = 230 + rand() * 180;
-      tree(cx + Math.cos(a) * r, cy + Math.sin(a) * r * 0.8);
+    // parks: one grove each
+    for (const p of G.bigParks) {
+      if (p.area < 0.6e6) continue;
+      for (const [x, y] of anchors(p.poly, p.bb, "P", 1, 1500)) {
+        mk("P", x, y, p.name || "Park", p);
+        for (let i = 0; i < 6; i++) pushItem({ type: "tree", x: x + (rand() - 0.5) * 420, y: y + (rand() - 0.5) * 320, s: 48 + rand() * 30, hue: rand() });
+      }
     }
-    return c;
+    curItems = null;
+    curKind = null;
+    // homes (for effect circles): every residential 300 m site, whether or not it is drawn
+    const b = D.bounds;
+    for (let x = b[0]; x < b[2]; x += 300)
+      for (let y = b[1]; y < b[3]; y += 300) {
+        if (world.zoneAt(x, y) !== "R") continue;
+        const t = sim.tractAt(x, y);
+        if (!t) continue;
+        homeSites.push({ x, y, w: t.average_walkscore > 84 ? 6 : t.average_walkscore > 68 ? 3 : 1 });
+      }
+  }
+  world.build = (function (orig) {
+    return function () { orig(); buildClusters(); };
+  })(world.build);
+  world.homeSites = () => homeSites;
+
+  // ---------- zones you can hover, click, remove from and rezone ----------
+  // the zone polygon under a point (residential / commercial / industrial / park), preferring the one the raster says is there
+  world.zoneAtPoint = function (x, y) {
+    const want = world.zoneAt(x, y);
+    if (!want || want === "W") return null;
+    let best = null;
+    for (const z of world.zones) {
+      const b = z.bb;
+      if (x < b[0] || x > b[2] || y < b[1] || y > b[3] || !CP.pointInPoly(x, y, z.poly)) continue;
+      const fit = z.kind === want;
+      if (!best || (fit && !best.fit) || (fit === best.fit && z.area < best.z.area)) best = { z, fit };
+    }
+    return best ? best.z : null;
+  };
+  // share of a district's land by zone, from the raster (R / C / I / P / none)
+  const mixCache = new Map();
+  world.districtMix = function (d) {
+    if (mixCache.has(d.id)) return mixCache.get(d.id);
+    const out = { R: 0, C: 0, I: 0, P: 0, none: 0, n: 0 };
+    for (let x = d.bbox[0]; x <= d.bbox[2]; x += 160)
+      for (let y = d.bbox[1]; y <= d.bbox[3]; y += 160) {
+        if (sim.districtAt(x, y) !== d) continue;
+        const z = world.zoneAt(x, y);
+        out.n++;
+        out[z && z !== "W" ? z : "none"]++;
+      }
+    mixCache.set(d.id, out);
+    return out;
+  };
+  // change a zone's land use: repaint the raster and the zone fills
+  world.setZoneKind = function (zone, kind) {
+    zone.kind = kind;
+    const code = CODE[kind];
+    for (let y = zone.bb[1]; y <= zone.bb[3]; y += ZG)
+      for (let x = zone.bb[0]; x <= zone.bb[2]; x += ZG) {
+        if (!CP.pointInPoly(x, y, zone.poly) || world.zoneAt(x, y) === "W") continue;
+        const cx = Math.floor((x - zx0) / ZG), cy = Math.floor((y - zy0) / ZG);
+        if (cx >= 0 && cy >= 0 && cx < ZW && cy < ZH) zoneGrid[cy * ZW + cx] = code;
+      }
+    zone.rezoned = true;
+    world.rezoned = G.landuse.filter((l) => l.rezoned);
+    mixCache.clear();
+  };
+
+  // the removable cluster under a world point, inside one district (parks are scenery, not removable)
+  world.clusterAt = function (x, y, d) {
+    let best = null, bd = Infinity;
+    for (const cl of world.clusters) {
+      if (cl.kind === "P" || cl.removed) continue;
+      if (cl.d === undefined) cl.d = sim.districtAt(cl.x, cl.y);
+      if (d && cl.d !== d) continue;
+      const dd = CP.dist(cl.x, cl.y, x, y);
+      if (dd < (cl.r || 420) && dd < bd) { bd = dd; best = cl; }
+    }
+    return best;
+  };
+  // take a cluster's buildings off the map
+  world.removeCluster = function (cl) {
+    cl.removed = true;
+    for (const it of cl.items) {
+      const l = cellItems.get(SITE_CELL(it.x, it.y));
+      if (l) { const i = l.indexOf(it); if (i >= 0) l.splice(i, 1); }
+    }
+  };
+
+  // the scenery in one 900 m cell (items placed by the clusters above)
+  world.cell = function (bx, by) {
+    return { cx: (bx + 0.5) * world.CELL, cy: (by + 0.5) * world.CELL, items: cellItems.get(bx * 4096 + by) || [] };
   };
 })();

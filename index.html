@@ -12,9 +12,6 @@
   <canvas id="game"></canvas>
 
   <!-- satellite HUD chrome -->
-  <div id="sat-hud" aria-hidden="true">
-    <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
-    <div class="scan"></div>
   </div>
 
   <!-- top bar: budget, timer, equity score, upkeep | tabs | pause, settings, sound -->
@@ -23,15 +20,13 @@
       <div class="stat" id="stat-budget">
         <span class="lbl">Budget</span>
         <span class="val"><span id="budget">$30M</span> <span id="rate" class="rate"></span></span>
-        <div class="hint" id="budget-hint"></div>
       </div>
-      <div class="stat"><span class="lbl">Term ends in</span><span id="timer" class="val">10:00</span></div>
+      <div class="stat"><span class="lbl">Time</span><span id="timer" class="val">10:00</span></div>
       <div class="stat stat-eq" title="Calgary's overall equity: the average of all six ratings across every district">
         <span class="lbl">Calgary Equity</span>
         <span class="val"><span id="eq-num">0</span><small>/100</small> <span id="equity"></span></span>
         <div class="eqbar"><span id="eq-start"></span><span id="eq-fill"></span><span id="eq-gain"></span></div>
       </div>
-      <div class="stat" title="Running costs of everything you have built"><span class="lbl">Upkeep</span><span id="upkeep" class="val">$0/min</span></div>
     </div>
     <nav id="tabs" class="panel">
       <button class="tab" data-tab="missions">🎯 Missions <span id="mission-count" class="pill"></span></button>
@@ -39,7 +34,7 @@
       <button class="tab" data-tab="build">🏗️ Build</button>
     </nav>
     <div id="controls" class="panel">
-      <span id="alt-wrap" title="Satellite altitude">🛰️ <span id="alt">408 km</span></span>
+      <span id="alt" class="hidden"></span>
       <button class="btn icon" id="btn-pause" title="Pause (P)">⏸</button>
       <button class="btn icon" id="btn-settings" title="Settings">⚙</button>
       <button class="btn icon" id="btn-sound" title="Sound on/off (M)">🔊</button>
@@ -57,6 +52,7 @@
       <h3>Plan <span class="muted small">· real 2024 Calgary Equity Index data</span></h3>
       <p class="muted">Districts are coloured by how fair life is for the chosen metric. Hover a district to see its real numbers.</p>
       <div id="metric-list"></div>
+      <div id="district-list"></div>
       <div id="metric-about"></div>
       <div id="indicators"></div>
       <div id="band-legend"></div>
@@ -68,10 +64,23 @@
     </section>
   </aside>
 
+  <!-- emergency bar: every active disaster, with a Respond button -->
+  <div id="alerts"></div>
+
+  <!-- map layers -->
+  <aside id="layers" class="panel hidden">
+    <button class="layer on" data-layer="R" style="--lc:#ffd43b" title="Residential"><i class="sw"></i>🏠</button>
+    <button class="layer on" data-layer="C" style="--lc:#ff8fa3" title="Commercial"><i class="sw"></i>🏬</button>
+    <button class="layer on" data-layer="I" style="--lc:#b197fc" title="Industrial"><i class="sw"></i>🏭</button>
+    <button class="layer on" data-layer="P" style="--lc:#69db7c" title="Parks"><i class="sw"></i>🌳</button>
+    <button class="layer on" data-layer="traffic" style="--lc:#37c871" title="Live traffic"><i class="sw"></i>🚦</button>
+  </aside>
+
   <!-- district profile (shown while zoomed into a district) -->
   <aside id="profile" class="panel hidden"></aside>
   <button id="btn-city" class="btn hidden">◂ City view <kbd>Esc</kbd></button>
 
+  <aside id="zone-card" class="panel hidden"></aside>
   <div id="tooltip" class="hidden"></div>
   <div id="speech" class="hidden"></div>
   <div id="toasts"></div>
@@ -124,7 +133,7 @@
       <div class="title-actions">
         <button class="btn primary big" id="btn-start">▶ Begin your term</button>
       </div>
-      <div class="credit">Data: City of Calgary, <i>Calgary Equity Index 2024</i> (Open Government Licence – City of Calgary)</div>
+      <div class="credit">Data: City of Calgary, <i>Calgary Equity Index 2024</i> (Open Government Licence – City of Calgary) · Map data © OpenStreetMap contributors (ODbL)</div>
     </div>
   </div>
 
@@ -133,16 +142,21 @@
   <script src="js/data/cei-data.js"></script>
   <script src="js/core.js"></script>
   <script src="js/data/geo.js"></script>
+  <script src="js/data/osm.js"></script>
+  <script src="js/osmgeo.js"></script>
   <script src="js/config.js"></script>
   <script src="js/sim.js"></script>
   <script src="js/challenges.js"></script>
   <script src="js/events.js"></script>
   <script src="js/world.js"></script>
+  <script src="js/traffic.js"></script>
   <script src="js/sprites.js"></script>
+  <script src="js/fx.js"></script>
   <script src="js/residents.js"></script>
   <script src="js/render.js"></script>
   <script src="js/audio.js"></script>
   <script src="js/ui.js"></script>
+  <script src="js/panels.js"></script>
   <script src="js/game.js"></script>
 </body>
 </html>

@@ -21,9 +21,12 @@
         <canvas width="104" height="96"></canvas>
         <span class="bld-main">
           <span class="bld-name">${b.name} <span class="helps">Helps mission</span></span>
-          <span class="bld-fx">${effectText(b)}</span>
-          ${b.risk ? `<span class="bld-risk">⚠ ${b.risk}</span>` : ""}
-          <span class="bld-zones">${b.zones.split("").map((z) => `<i style="--zc:${CP.ZONES[z].color}">${CP.ZONES[z].icon} ${CP.ZONES[z].name}</i>`).join("")}</span>
+          <span class="bld-short">${shortText(b)}</span>
+          <span class="bld-more">
+            <span class="bld-fx">${effectText(b)}</span>
+            ${b.risk ? `<span class="bld-risk">⚠ ${b.risk}</span>` : ""}
+            <span class="bld-zones">${b.zones.split("").map((z) => `<i style="--zc:${CP.ZONES[z].color}">${CP.ZONES[z].icon} ${CP.ZONES[z].name}</i>`).join("")}</span>
+          </span>
         </span>
         <span class="bld-cost"><span class="c"></span><small>${upkeepText(b)}</small></span></button>`;
     }).join("");
@@ -111,6 +114,12 @@
     if (b.buffer) s += `<br><span class="pos">🛡 Buffers pollution within ${(CP.PARK_BUFFER / 1000).toFixed(1)} km</span>`;
     return s;
   }
+  // the one-line version for the Build list: the biggest gain, and a warning if it has a downside
+  function shortText(b) {
+    const top = b.gain.map((g, i) => [g, i]).sort((a, c) => c[0] - a[0])[0];
+    const bad = (b.area && b.area.gain.some((g) => g < 0)) || b.gain.some((g) => g < 0);
+    return `${CP.DOMAINS[top[1]].icon} ${CP.DOMAINS[top[1]].short} ${sgn(top[0])}${bad ? ` <span class="neg">· ⚠ trade-off</span>` : ""}`;
+  }
   function upkeepText(b) {
     let s = `upkeep ${CP.money(b.upkeep)}/min`;
     if (b.income) s += `<br>tax +${CP.money(b.income)}/min`;
@@ -125,7 +134,7 @@
     R.overlayMetric = tab === "plan" ? ui.metric : null; // Plan view = equity colours; otherwise normal view
     ui.hideTooltip();
     if (tab === "build") ui.tutStep("build");
-    if (tab === "plan") ui.renderIndicators();
+    if (tab === "plan") { ui.renderIndicators(); ui.renderDistrictList(); }
   };
 
   ui.select = function (type) {
@@ -143,23 +152,38 @@
     const d = CP.DOMAINS[i];
     $("#metric-about").innerHTML = `<b>${d.icon} ${d.label}</b><p>${d.plain}</p>`;
     ui.renderIndicators();
+    if (ui.tab === "plan") ui.renderDistrictList();
   };
+
+  // leaderboard for the chosen metric: the top 3 districts, and a button to show them all. Click a row to zoom there.
+  ui.dlAll = false;
+  ui.renderDistrictList = function () {
+    const m = ui.metric;
+    const ranked = sim.districts.slice().sort((a, b) => b.score[m] - a.score[m]);
+    const shown = ui.dlAll ? ranked : ranked.slice(0, 3);
+    const rows = shown.map((d) => {
+      const v = Math.round(d.score[m]), b = CP.bandOf(d.score[m]), rank = ranked.indexOf(d) + 1;
+      return `<div class="dr" data-d="${d.id}"><span class="dn"><em>${rank}</em><i style="background:${d.color}"></i>${CP.esc(d.name)}</span><span class="bar"><i style="width:${v}%;background:${b.color}"></i></span><b>${v}</b></div>`;
+    }).join("");
+    $("#district-list").innerHTML = `<div class="dh">🏆 ${CP.DOMAINS[m].label}</div>${rows}<button class="dmore" data-more>${ui.dlAll ? "Show less ▴" : `Show more ▾ (${ranked.length - 3})`}</button>`;
+  };
+  $("#district-list").addEventListener("click", (e) => {
+    if (e.target.closest("[data-more]")) { ui.dlAll = !ui.dlAll; return ui.renderDistrictList(); }
+    const r = e.target.closest(".dr");
+    if (r) CP.game.enterDistrict(sim.districts[+r.dataset.d]);
+  });
 
   // all of the real CEI indicators for the chosen metric: the hovered/zoomed district next to Calgary
   let indKey = "";
   ui.renderIndicators = function (hover) {
-    const d = hover || R.focus || R.highlight || null;
+    const d = hover || R.focus || null;
     const key = (d ? d.id : "city") + ":" + ui.metric;
     if (key === indKey) return;
     indKey = key;
-    const rows = CP.INDICATORS.filter((x) => x.domain === ui.metric).map((ind) => {
-      const avg = sim.cityInd[ind.key], v = d ? d.ind[ind.key] : avg;
-      let cls = "";
-      if (d && ind.dir && Math.abs(v - avg) > Math.abs(avg) * 0.08) cls = ind.dir * (v - avg) > 0 ? "pos" : "neg";
-      return `<tr class="${cls}"><td>${ind.label}</td><td>${CP.fmtIndicator(ind, v)}</td><td class="muted">${CP.fmtIndicator(ind, avg)}</td></tr>`;
-    }).join("");
-    $("#indicators").innerHTML = `<table><thead><tr><th>Real indicator (2024 CEI)</th><th>${d ? CP.esc(d.name) : "Calgary"}</th><th>Calgary</th></tr></thead><tbody>${rows}</tbody></table>
-      <p class="muted small">${d ? "Green = better than the Calgary average, red = worse." : "Hover a district to compare it with the city."} Your buildings change the game ratings, not these 2024 measurements.</p>`;
+    if (!d) { $("#indicators").innerHTML = ""; return; }
+    const rows = sim.worstIndicators(d, ui.metric).slice(0, 4).map(({ ind, v, avg, gap }) =>
+      `<tr class="${gap > 0.08 ? "neg" : gap < -0.08 ? "pos" : ""}"><td>${ind.label}</td><td>${CP.fmtIndicator(ind, v)}</td><td class="muted">${CP.fmtIndicator(ind, avg)}</td></tr>`).join("");
+    $("#indicators").innerHTML = `<table><thead><tr><th>${CP.esc(d.name)}</th><th>here</th><th>Calgary</th></tr></thead><tbody>${rows}</tbody></table>`;
   };
 
   // ---------- refresh everything that depends on scores or money ----------
@@ -178,10 +202,6 @@
     const net = sim.netPerMin();
     $("#rate").textContent = `${net >= 0 ? "+" : "−"}${CP.money(Math.abs(net))}/min`;
     $("#rate").className = "rate " + (net >= 0 ? "pos" : "neg");
-    $("#budget-hint").innerHTML = `City revenue <b>+${CP.money(CP.INCOME_PER_MIN)}/min</b>` +
-      (sim.income() > CP.INCOME_PER_MIN ? ` · business tax <b>+${CP.money(sim.income() - CP.INCOME_PER_MIN)}/min</b>` : "") +
-      ` · upkeep <b>−${CP.money(sim.upkeep())}/min</b>. Paid every ${CP.PAYOUT_EVERY} s. Grants arrive when missions are done.`;
-    $("#upkeep").textContent = `${CP.money(sim.upkeep())}/min`;
     const ov = sim.overall();
     $("#equity").innerHTML = CP.chip(ov);
     if (ui.eqShown === null) ui.eqShown = ov;
@@ -216,27 +236,18 @@
     R.pins = missions.active.map((x) => ({ d: missions.focus(x), icon: CP.DOMAINS[missions.metrics(x)[0]].icon }));
     if (ui.mission && !missions.active.includes(ui.mission)) ui.mission = null;
     if (!$("#profile").classList.contains("hidden") && R.focus) ui.profile(R.focus);
-    if (ui.tab === "plan") { indKey = ""; ui.renderIndicators(); }
+    if (ui.tab === "plan") { indKey = ""; ui.renderIndicators(); ui.renderDistrictList(); }
   };
   ui.activeMission = () => (ui.mission && missions.active.includes(ui.mission) ? ui.mission : missions.active[0] || null);
 
   function missionCard(m) {
-    const cur = missions.current(m), goal = missions.goal(m);
     const on = m === ui.activeMission();
-    const tries = CP.BUILD_ORDER.filter((t) => missions.metrics(m).some((i) => CP.BUILDINGS[t].gain[i] >= 20)).slice(0, 2)
-      .map((t) => `${CP.BUILDINGS[t].icon} ${CP.BUILDINGS[t].name}`).join(", ");
-    const nowGoal = m.kind === "multi"
-      ? `<span>Now <b>${cur}</b> districts</span>${arrow}<span>Goal <b>${goal}</b></span>`
-      : `<span>Now ${CP.chip(cur, true)}</span>${arrow}<span>Goal ${CP.chip(m.target)}</span>`;
     const tl = missions.timeLeft(m);
-    return `<div class="mission ${on ? "on" : ""} k-${m.kind}" data-id="${m.id}" title="Go to ${CP.esc(missions.focus(m).name)}">
+    return `<div class="mission ${on ? "on" : ""} k-${m.kind}" data-id="${m.id}">
       <div class="mt">${m.icon} ${CP.esc(m.title)}</div>
-      ${m.data ? `<div class="mdata">📊 ${CP.esc(m.data)}</div>` : ""}
-      ${tl !== null ? `<div class="mtime">⏱ <span data-timer="${m.id}">${CP.clock(tl)}</span> left · bonus grant</div>` : ""}
-      <div class="mrow mnow">${nowGoal}</div>
+      ${tl !== null ? `<div class="mtime">⏱ <span data-timer="${m.id}">${CP.clock(tl)}</span></div>` : ""}
       <div class="prog"><span style="width:${missions.progress(m) * 100}%"></span></div>
-      <div class="mrow"><span class="muted small">${tries ? "Try: " + tries : ""}</span><span class="grant">${CP.money(m.grant)}</span></div>
-      <button class="go">Go ▸</button>
+      <div class="mrow"><span class="grant">${CP.money(m.grant)}</span><button class="go">Go ▸</button></div>
     </div>`;
   }
 
@@ -290,55 +301,35 @@
   };
 
   // ---------- tooltips ----------
-  // city view: a district's six ratings with numbers and 1-2 real indicators each
+  // city view: just the name and overall rating (the six ratings live in Plan / the district card)
   ui.districtTip = function (d) {
-    return `<div class="tt-h">${CP.esc(d.name)} <span class="muted">· click to zoom in</span></div>
-      <div class="tt-row tt-all"><span>Overall equity <b>${d.overall.toFixed(1)}</b>/100</span>${CP.chip(d.overall)}</div>
-      ${CP.DOMAINS.map((dm, i) => {
-        const w = sim.worstIndicators(d, i).slice(0, 2);
-        return `<div class="tt-row ${ui.tab === "plan" && ui.metric === i ? "sel" : ""}"><span>${dm.icon} ${dm.label}</span>${CP.chip(d.score[i], true)}</div>
-          <div class="tt-ind">${w.map((x) => `${x.ind.label}: <b class="${x.gap > 0.08 ? "neg" : x.gap < -0.08 ? "pos" : ""}">${CP.fmtIndicator(x.ind, x.v)}</b> <span class="muted">(Calgary ${CP.fmtIndicator(x.ind, x.avg)})</span>`).join("<br>")}</div>`;
-      }).join("")}`;
+    const m = ui.tab === "plan" ? ui.metric : null;
+    return `<div class="tt-h">${CP.esc(d.name)} ${CP.chip(m !== null ? d.score[m] : d.overall, true)}</div>${m !== null ? `<div class="muted">${CP.DOMAINS[m].icon} ${CP.DOMAINS[m].label}</div>` : ""}`;
   };
-  // city view with a building selected: what it would do in the district under the cursor
+  // city view with a building selected
   ui.cityBuildTip = function (type, d) {
     const b = CP.BUILDINGS[type], cost = sim.baseCost(type, d);
     const short = !sim.canAfford(cost);
-    let html = `<div class="tt-h">${b.icon} ${b.name} in ${CP.esc(d.name)}</div>`;
-    b.gain.forEach((g, i) => {
-      if (g <= 0) return;
-      const before = d.score[i], after = Math.min(100, before + g);
-      html += `<div class="tt-row"><span>${CP.DOMAINS[i].icon} ${CP.DOMAINS[i].label}</span><span>${CP.chip(before)}${CP.bandIndex(before) === CP.bandIndex(after) ? ' <span class="pos">▲ ' + sgn(after - before) + "</span>" : arrow + CP.chip(after)}</span></div>`;
-    });
-    html += `<div class="tt-cost ${short ? "neg" : ""}">Cost ${CP.money(cost)}${short ? " · not enough budget" : ""} · upkeep ${CP.money(b.upkeep)}/min</div>`;
-    return html + `<div class="muted" style="margin-top:5px">Click to zoom in and choose a lot.</div>`;
+    return `<div class="tt-h">${b.icon} ${b.name} · ${CP.esc(d.name)}</div><div class="${short ? "neg" : "muted"}">${CP.money(cost)}${short ? " · not enough budget" : ""}. Click to zoom in.</div>`;
   };
-  // the net-effect card shown while hovering a lot with a building selected
+  // placing a building: name, why not (if blocked), the biggest changes here, the cost
   ui.previewCard = function (pv) {
     const b = pv.spec;
-    let html = `<div class="tt-h">${b.icon} ${b.name} <span class="muted">· ${CP.ZONES[pv.lot.zone].icon} ${CP.ZONES[pv.lot.zone].name} lot</span></div>`;
-    if (pv.locked || pv.protest || pv.lot.building) return html + `<div class="neg">${pv.why}</div>`;
+    let html = `<div class="tt-h">${b.icon} ${b.name}</div>`;
+    if (pv.locked || pv.protest || pv.lot.building || pv.blocked) return html + `<div class="neg">${pv.why}</div>`;
     if (!pv.allowed) {
-      html += `<div class="neg">✖ ${pv.why}</div>`;
-      if (!pv.rezone) html += `<div class="muted">Hold <kbd>Shift</kbd> and click to rezone to ${CP.ZONES[pv.toZone].name} (+${CP.money(CP.REZONE.cost)}, −${CP.REZONE.goodwill} Belonging here).</div>`;
-      else html += `<div class="warn">Rezoning to ${CP.ZONES[pv.toZone].name}: +${CP.money(CP.REZONE.cost)} and residents lose goodwill.</div>`;
+      html += `<div class="neg">Not allowed on ${CP.ZONES[pv.lot.zone].name.toLowerCase()} land.</div>`;
+      if (!pv.rezone) html += `<div class="muted"><kbd>Shift</kbd>+click to rezone (+${CP.money(CP.REZONE.cost)})</div>`;
     }
-    for (const x of pv.diffs.slice(0, 5)) {
-      const parts = x.delta.map((v, i) => [v, i]).filter(([v]) => Math.abs(v) >= 0.5).map(([v, i]) => {
-        const band = CP.bandIndex(x.before[i]) !== CP.bandIndex(x.after[i]) ? ` <span class="muted">(${CP.bandOf(x.before[i]).name} → ${CP.bandOf(x.after[i]).name})</span>` : "";
-        return `<span class="${v > 0 ? "pos" : "neg"}">${sgn(v)} ${CP.DOMAINS[i].icon} ${CP.DOMAINS[i].short}</span>${band}`;
-      });
-      html += `<div class="tt-eff"><b>${CP.esc(x.d.name)}</b>${x.own ? " (this district)" : " (nearby)"}: ${parts.join(", ")}</div>`;
+    const own = pv.diffs.find((x) => x.own);
+    if (own) {
+      const parts = own.delta.map((v, i) => [v, i]).filter(([v]) => Math.abs(v) >= 0.5).sort((a, c) => Math.abs(c[0]) - Math.abs(a[0])).slice(0, 3)
+        .map(([v, i]) => `<span class="${v > 0 ? "pos" : "neg"}">${sgn(v)} ${CP.DOMAINS[i].icon}</span>`);
+      html += `<div class="tt-eff">${parts.join("  ")}</div>`;
     }
-    if (pv.harmedHomes) html += `<div class="neg">◯ ${b.area.what}: about ${pv.harmedHomes.toLocaleString()} homes in range lose out${pv.buffered ? ' <span class="pos">(park buffer: −75% harm)</span>' : ""}</div>`;
-    if (pv.helpedHomes && !pv.harmedHomes) html += `<div class="pos">◯ ${b.area.what}: reaches about ${pv.helpedHomes.toLocaleString()} homes</div>`;
-    if (pv.protestRisk) html += `<div class="neg">📢 Residents will protest: building here stops for ${CP.PROTEST.seconds} s. A park nearby would buffer it.</div>`;
-    if (pv.lot.house) html += `<div class="warn">🏚 Demolishes a family home: +${CP.money(CP.DEMOLISH.cost)} and less housing here.</div>`;
-    const dv = pv.overallAfter - pv.overallBefore;
-    html += `<div class="tt-row tt-all"><span>Calgary Equity</span><span>${pv.overallBefore.toFixed(1)} → <b class="${dv >= 0 ? "pos" : "neg"}">${pv.overallAfter.toFixed(1)}</b></span></div>`;
-    html += `<div class="tt-cost ${pv.short ? "neg" : ""}">Cost <b>${CP.money(pv.cost)}</b>${pv.demolish ? ` (incl. ${CP.money(pv.demolish)} demolition)` : ""}${pv.rezone ? ` (incl. ${CP.money(pv.rezone)} rezoning)` : ""} · upkeep ${CP.money(b.upkeep)}/min${b.income ? ` · tax +${CP.money(b.income)}/min` : ""}</div>`;
+    if (pv.protestRisk) html += `<div class="neg">📢 Residents will protest</div>`;
+    html += `<div class="tt-cost ${pv.short ? "neg" : ""}">${CP.money(pv.cost)}${pv.rezone ? " (with rezoning)" : ""}</div>`;
     if (pv.short) html += `<div class="neg">${pv.why}</div>`;
-    else if (pv.ok) html += `<div class="muted" style="margin-top:4px">Click to build. You can undo for ${CP.UNDO_SECONDS} s.</div>`;
     return html;
   };
   ui.lotTip = function (lot) {
@@ -377,53 +368,17 @@
     bannerT = setTimeout(() => el.classList.add("hidden"), 6500);
   };
 
-  // ---------- district profile card ----------
+  // ---------- district profile card: name, overall, the six ratings. That is all. ----------
   ui.profile = function (d) {
     const el = $("#profile");
     if (!d) { el.classList.add("hidden"); $("#btn-city").classList.add("hidden"); return; }
     el.classList.remove("hidden");
     $("#btn-city").classList.remove("hidden");
-    const r = d.resident;
-    const say = CP.residents.say(r);
-    const counts = {};
-    let locked = 0, free = 0;
-    for (const l of d.lots) {
-      counts[l.zone] = (counts[l.zone] || 0) + 1;
-      if (sim.isLocked(l)) locked++;
-      else if (!l.building) free++;
-    }
-    const traits = [];
-    if (d.traits.flood) traits.push(`<span class="trait">🌊 Flood risk: on the river (2013 flood)</span>`);
-    if (d.traits.highRent) traits.push(`<span class="trait">💸 High rents: new transit can push people out</span>`);
-    if (d.def.cost > 1.2) traits.push(`<span class="trait">🏷 Expensive land ×${d.def.cost}</span>`);
-    const pr = sim.protests.get(d.id);
-    if (pr > 0) traits.push(`<span class="trait bad">📢 Protest: building paused ${Math.ceil(pr)} s</span>`);
-    const evs = sim.penalties.filter((p) => p.d === d && !p.fixed).map((p) => {
-      const t = CP.EVENT_TYPES[p.ev];
-      return `<div class="pevent">${t.icon} <b>${t.name}</b>: ${CP.DOMAINS[p.m].short} −${Math.round(p.amount)}. Fix it with a ${t.fix.map((f) => CP.BUILDINGS[f].name).join(" or ")}.</div>`;
-    }).join("");
+    const evs = sim.penalties.filter((p) => p.d === d && !p.fixed && p.amount > 0 && CP.EVENT_TYPES[p.ev]).map((p) => `<div class="pevent">${CP.EVENT_TYPES[p.ev].icon} ${CP.EVENT_TYPES[p.ev].name}</div>`).join("");
     el.innerHTML = `
-      <div class="pf-h"><div><h3>${CP.esc(d.name)}</h3><div class="muted small">≈ ${d.population.toLocaleString()} residents · ${d.tracts.length} census tracts</div></div>
-        <button class="btn" data-city>◂ City</button></div>
-      <p class="pf-story">${CP.esc(d.def.story)}</p>
-      ${traits.length ? `<div class="traits">${traits.join("")}</div>` : ""}
+      <div class="pf-h"><h3>${CP.esc(d.name)}</h3> ${CP.chip(d.overall)}<button class="btn" data-city>◂ City</button></div>
       ${evs}
-      <div class="tt-row tt-all"><span>Overall equity <b>${d.overall.toFixed(1)}</b>/100</span>${CP.chip(d.overall)}</div>
-      ${CP.DOMAINS.map((dm, i) => {
-        const moved = Math.abs(d.score[i] - d.startScore[i]) >= 0.5;
-        return `<div class="tt-row"><span>${dm.icon} ${dm.label}</span><span>${moved ? `<span class="muted small">was ${Math.round(d.startScore[i])}</span> ` : ""}${CP.chip(d.score[i], true)}</span></div>`;
-      }).join("")}
-      <div class="pf-res">
-        <canvas width="88" height="112"></canvas>
-        <div><b>${CP.esc(r.name)}</b> <span class="muted small">lives here</span>
-          <div class="pf-say ${say.mood}">“${CP.esc(say.text)}”</div>
-          <button class="btn small" data-talk>💬 Talk</button></div>
-      </div>
-      <div class="pf-lots"><b>${d.lots.length} lots:</b> ${Object.entries(counts).map(([z, n]) => `${CP.ZONES[z].icon} ${CP.ZONES[z].name} ×${n}`).join(" · ")}
-        <div class="muted small">${free} open${locked ? ` · ${locked} locked 🔒` : ""}. Real ratings come from the 2024 CEI.</div></div>`;
-    const c = el.querySelector("canvas").getContext("2d");
-    c.scale(2, 2);
-    S.resident(c, 22, 54, 0.46, r.look, { phase: 0, moving: false, dir: 1 });
+      ${CP.DOMAINS.map((dm, i) => `<div class="tt-row"><span>${dm.icon} ${dm.short}</span>${CP.chip(d.score[i], true)}</div>`).join("")}`;
   };
 
   // ---------- speech bubble (opening scene and residents) ----------
@@ -491,8 +446,8 @@
     if (step.id === "plan") return { r: rect($('.tab[data-tab="build"]')), side: "below" };
     if (step.id === "pick") return { r: rect($("#build-list .bld.helps") || $("#build-list .bld")), side: "right" };
     if (step.id === "lot" && R.focus) {
-      const lot = R.focus.lots.find((l) => !l.building && !sim.isLocked(l) && ui.selected && CP.BUILDINGS[ui.selected].zones.includes(l.zone));
-      if (lot) { const [x, y] = R.toScreen(lot.x, lot.y); return { r: { left: x - 40, right: x + 40, top: y - 30, bottom: y + 30, width: 80, height: 60 }, side: "right" }; }
+      const [x, y] = R.toScreen(R.focus.label[0], R.focus.label[1]);
+      return { r: { left: x - 40, right: x + 40, top: y - 30, bottom: y + 30, width: 80, height: 60 }, side: "right" };
     }
     return { r: null };
   }
@@ -647,7 +602,7 @@
     const [gv, gi] = order[0], [lv, li] = order[order.length - 1];
     const lossD = where(li, -1);
     const lossWhy = lossD && sim.buildings.filter((b) => b.d === lossD || (b.fracs || []).some(([d]) => d === lossD)).filter((b) => (CP.BUILDINGS[b.type].area || { gain: [] }).gain[li] < 0 || CP.BUILDINGS[b.type].gain[li] < 0).map((b) => CP.BUILDINGS[b.type].name);
-    const lossEv = lossD && sim.penalties.filter((p) => p.d === lossD && p.m === li && !p.fixed).map((p) => CP.EVENT_TYPES[p.ev].name.toLowerCase());
+    const lossEv = lossD && sim.penalties.filter((p) => p.d === lossD && p.m === li && !p.fixed && CP.EVENT_TYPES[p.ev]).map((p) => CP.EVENT_TYPES[p.ev].name.toLowerCase());
     const gainLine = gv >= 0.3
       ? `<b class="pos">Biggest gain:</b> ${CP.DOMAINS[gi].icon} ${CP.DOMAINS[gi].label}, ${sgn(gv, 1)} points above real Calgary, led by ${CP.esc(where(gi, 1).name)}.`
       : `<b>Biggest gain:</b> none. Calgary looks just like the real 2024 index.`;

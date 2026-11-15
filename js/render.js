@@ -7,6 +7,7 @@
 
   const R = (CP.render = {
     cam: { x: 0, y: 0, z: 0.006, rot: 0 },
+    layers: { R: true, C: true, I: true, P: true, amenities: true, transit: true, traffic: true }, // map layers the player can toggle
     overlayMetric: null, // index of the metric shown as band colours (Plan view) or null (normal view)
     particles: [],
     props: [], // extra scenery for the opening scene: {kind, x, y}
@@ -20,10 +21,17 @@
     flashes: [], // [{d, t, color}] event flashes
     showNeeds: false, // need icons above residents' heads
     dayFrac: null, // 0..1 through the term (dawn -> noon -> dusk)
+    shake: 0, // seconds of screen shake left (earthquakes)
     cityZ: 0.02, // zoom of the whole-city view (set by game.js)
     time: 0,
   });
 
+  // every district gets its own colour (golden-angle hues, so neighbours differ) for fills, borders and name tags
+  sim.districts.forEach((d, i) => {
+    const h = (i * 137.508) % 360;
+    d.color = `hsl(${h.toFixed(0)} 66% 52%)`;
+    d.tint = `hsl(${h.toFixed(0)} 70% 62%)`;
+  });
   let canvas, ctx, W = 0, H = 0, DPR = 1;
   let stars = null;
   const clouds = [];
@@ -134,6 +142,7 @@
     const c = R.cam;
     const z = c.z;
     screenTransform();
+    if (R.shake > 0) { R.shake -= dt; const a = Math.min(1, R.shake) * 11; ctx.translate((Math.random() - 0.5) * a, (Math.random() - 0.5) * a); }
     const px = (-c.x * z * 0.02) % 1024, py = (-c.y * z * 0.02) % 1024;
     for (let x = px - 1024; x < W; x += 1024) for (let y = py - 1024; y < H; y += 1024) ctx.drawImage(stars, x, y);
 
@@ -160,6 +169,18 @@
     const near = CP.clamp((z - 0.1) / 0.25, 0, 1); // 0 from orbit, 1 close to the ground
     const map = CP.clamp((z - 0.008) / 0.006, 0, 1); // map furniture fades in as the city fills the view
 
+    const vb = visibleBounds(400);
+    const hit = (bb) => bb[2] >= vb[0] && bb[0] <= vb[2] && bb[3] >= vb[1] && bb[1] <= vb[3];
+    // far away: every district in its own colour. Close up: the real zones show through.
+    if (map > 0 && R.overlayMetric === null) {
+      const a = CP.clamp((0.09 - z) / 0.05, 0, 1) * 0.6 * map;
+      if (a > 0.01) {
+        ctx.globalAlpha = a;
+        for (const d of sim.districts) if (hit(d.bbox)) { ctx.fillStyle = d.tint; ctx.fill(d.path, "evenodd"); }
+        ctx.globalAlpha = 1;
+      }
+    }
+    if (map > 0 && z >= 0.05) drawZones(z, map, hit);
     // Plan view: each district filled with the band colour of the chosen metric
     if (R.overlayMetric !== null && map > 0) {
       ctx.globalAlpha = 0.6 * map;
@@ -171,28 +192,36 @@
     }
     if (map > 0) {
       ctx.globalAlpha = map;
-      drawWaterAndRoads(z);
+      drawWaterAndRoads(z, hit);
+      if (R.layers.traffic && CP.traffic) CP.traffic.drawCars(ctx, z, visibleBounds(0));
       ctx.lineCap = "round";
-      for (const l of G.ctrain) {
-        ctx.strokeStyle = l.color;
-        ctx.lineWidth = Math.max(2 / z, 10);
-        ctx.setLineDash([9 / z, 7 / z]);
-        ctx.stroke(l.path);
+      if (R.layers.transit) {
+        ctx.strokeStyle = "#d71920";
+        ctx.lineWidth = Math.max(2.4 / z, 14);
+        ctx.setLineDash([]);
+        ctx.stroke(G.ctrainPath);
+        ctx.strokeStyle = "rgba(255,255,255,0.9)";
+        ctx.lineWidth = Math.max(1 / z, 5);
+        ctx.setLineDash([22 / z, 22 / z]);
+        ctx.stroke(G.ctrainPath);
+        ctx.setLineDash([]);
       }
-      ctx.setLineDash([]);
       // focus mode: dim every other district
       if (R.focus) {
-        ctx.fillStyle = "rgba(8,12,30,0.38)";
-        for (const d of sim.districts) if (d !== R.focus) ctx.fill(d.path, "evenodd");
+        ctx.fillStyle = "rgba(255,255,255,0.35)";
+        for (const d of sim.districts) if (d !== R.focus && hit(d.bbox)) ctx.fill(d.path, "evenodd");
       }
-      // thick district borders: dark casing + bright line, constant width on screen
+      // thick district borders: dark casing + the district's own colour (Plan view: its band colour), constant width on screen
       ctx.lineJoin = "round";
-      ctx.strokeStyle = "rgba(6,10,28,0.9)";
+      ctx.strokeStyle = "rgba(6,10,28,0.85)";
       ctx.lineWidth = 7 / z;
-      for (const d of sim.districts) ctx.stroke(d.path);
-      ctx.strokeStyle = "rgba(255,255,255,0.96)";
-      ctx.lineWidth = 2.8 / z;
-      for (const d of sim.districts) ctx.stroke(d.path);
+      for (const d of sim.districts) if (hit(d.bbox)) ctx.stroke(d.path);
+      ctx.lineWidth = 3.4 / z;
+      for (const d of sim.districts) {
+        if (!hit(d.bbox)) continue;
+        ctx.strokeStyle = R.overlayMetric !== null ? CP.bandOf(d.score[R.overlayMetric]).color : d.color;
+        ctx.stroke(d.path);
+      }
       ctx.globalAlpha = 1;
     }
     // protests: red hatch over the district
@@ -231,6 +260,24 @@
       ctx.lineWidth = 4.5 / z;
       ctx.stroke(R.hoverDistrict.path);
     }
+    for (const [zn, col] of [[R.hoverZone, "#5ee6ff"], [R.selZone, "#ffd43b"]]) {
+      if (!zn) continue;
+      ctx.lineJoin = "round";
+      ctx.fillStyle = col === "#ffd43b" ? "rgba(255,212,59,0.16)" : "rgba(94,230,255,0.14)";
+      ctx.fill(zn.path);
+      ctx.strokeStyle = "rgba(6,10,28,0.85)"; ctx.lineWidth = 8 / z; ctx.stroke(zn.path);
+      ctx.strokeStyle = col; ctx.lineWidth = 4.5 / z; ctx.stroke(zn.path);
+    }
+    for (const [cl, col] of [[R.hoverCluster, "#5ee6ff"], [R.selCluster, "#ffd43b"]]) {
+      if (!cl || cl.removed) continue;
+      ctx.strokeStyle = col;
+      ctx.lineWidth = (4 + Math.sin(t * 6)) / z;
+      ctx.setLineDash([22 / z, 14 / z]);
+      ctx.beginPath(); ctx.arc(cl.x, cl.y, cl.r || 420, 0, 7); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = col === "#ffd43b" ? "rgba(255,212,59,0.12)" : "rgba(94,230,255,0.1)";
+      ctx.fill();
+    }
     if (R.focus) {
       ctx.strokeStyle = "#ffffff";
       ctx.lineWidth = 6 / z;
@@ -243,15 +290,26 @@
     const shadowG = ctx.createLinearGradient(pcx - pr, pcy - pr, pcx + pr, pcy + pr);
     shadowG.addColorStop(0, "rgba(0,0,20,0)");
     shadowG.addColorStop(0.75, "rgba(0,0,20,0)");
-    shadowG.addColorStop(1, "rgba(0,0,30,0.55)");
+    shadowG.addColorStop(1, "rgba(0,0,30,0)");
     ctx.fillStyle = shadowG;
     ctx.beginPath(); ctx.arc(pcx, pcy, pr, 0, 7); ctx.fill();
 
     if (map > 0) {
       drawLots(t);
       drawObjects(t, map);
+      // disasters on top of the buildings, in world coordinates
+      if (CP.events.active.length) {
+        ctx.save();
+        const cur2 = ctx.getTransform();
+        ctx.setTransform(cur2.multiply(new DOMMatrix([z, 0, 0, z, W / 2 - c.x * z, H / 2 - c.y * z])));
+        for (const inc of CP.events.active) CP.fx.draw(ctx, inc, t, z);
+        ctx.restore();
+      }
       drawDaylight(pcx, pcy, pr);
       drawLabels(map * (1 - near * 0.7), t);
+      drawServices(z, map);
+      drawLandmarks(map);
+      for (const inc of CP.events.active) { const [mx, my] = R.toScreen(inc.x, inc.y); CP.fx.marker(ctx, inc, mx, my - 52, t); }
     }
 
     const cloudA = CP.clamp(1 - (z - R.minZoom() * 1.2) / (R.minZoom() * 1.3), 0, 1) * 0.9;
@@ -277,22 +335,36 @@
     ];
   }
 
-  // Rivers and MAJOR roads only (highways and main arteries), drawn as vectors so they stay crisp.
-  function drawWaterAndRoads(z) {
+  // Zone layers (close-up only): each of residential / commercial / industrial / parks is its own layer. Only the zone
+  // polygons that are on screen are filled, which keeps this cheap. A layer that is off draws nothing.
+  const ZCOL = { R: "#ffd43b", C: "#ff8fa3", I: "#b197fc", P: "#69db7c" };
+  function drawZones(z, map, hit) {
+    ctx.save();
+    ctx.clip(world.cityPath);
+    ctx.globalAlpha = 0.6 * map;
+    for (const k of ["R", "C", "I", "P"]) {
+      if (!R.layers[k]) continue;
+      ctx.fillStyle = ZCOL[k];
+      for (const zn of world.zones) if (zn.kind === k && hit(zn.bb)) ctx.fill(zn.path);
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+
+  // Rivers and the big roads (freeways amber, arterials white) as crisp vectors, only for the tiles on screen
+  function drawWaterAndRoads(z, hit) {
     ctx.lineCap = ctx.lineJoin = "round";
-    for (const r of G.rivers) {
-      ctx.strokeStyle = "#2b6f9c"; ctx.lineWidth = Math.max(r.width * 1.5, 3.2 / z); ctx.stroke(r.path);
-      ctx.strokeStyle = "#4b9ad0"; ctx.lineWidth = Math.max(r.width, 1.8 / z); ctx.stroke(r.path);
+    for (const r of G.rivers) if (hit(r.bb)) { ctx.strokeStyle = "#5aa9de"; ctx.lineWidth = Math.max(r.width, 2.4 / z); ctx.stroke(r.path); }
+    for (const l of G.lakes) if (hit(l.bb)) { ctx.fillStyle = "#5aa9de"; ctx.fill(l.path); }
+    if (z < 0.04) return; // from far away the baked map already shows them
+    for (const t of G.roadTiles.values()) {
+      if (!hit(t.bb)) continue;
+      ctx.strokeStyle = "rgba(70,70,85,0.8)"; ctx.lineWidth = Math.max(34, 3.6 / z); ctx.stroke(t[2]);
+      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = Math.max(20, 2 / z); ctx.stroke(t[2]);
+      ctx.strokeStyle = "rgba(80,60,20,0.9)"; ctx.lineWidth = Math.max(48, 3.6 / z); ctx.stroke(t[3]);
+      ctx.strokeStyle = "#ffc857"; ctx.lineWidth = Math.max(30, 2 / z); ctx.stroke(t[3]);
     }
-    for (const l of G.lakes) { ctx.fillStyle = "#3f8fc2"; ctx.fill(l.path); }
-    for (const r of G.roads) {
-      const hw = r.w >= 30;
-      ctx.strokeStyle = "rgba(52,54,62,0.95)"; ctx.lineWidth = Math.max(r.w * 3, (hw ? 5 : 3.6) / z); ctx.stroke(r.path);
-    }
-    for (const r of G.roads) {
-      const hw = r.w >= 30;
-      ctx.strokeStyle = hw ? "#ffc857" : "#f3ecd8"; ctx.lineWidth = Math.max(r.w * 1.8, (hw ? 2.8 : 1.7) / z); ctx.stroke(r.path);
-    }
+    if (R.layers.traffic && CP.traffic && CP.traffic.ready) CP.traffic.drawRoads(ctx, z, hit);
   }
 
   // green glow around parks, a faint red haze around polluters, and the preview's effect circle
@@ -337,51 +409,34 @@
     }
   }
 
-  // empty lots of the zoomed-in district
+  // the ghost spot under the cursor while placing (there are no pre-set lots any more)
   function drawLots(t) {
-    const lots = R.lotsShown();
-    if (!lots.length) return;
+    if (!R.preview) return;
+    const lot = R.preview.lot, pv = R.preview.pv;
+    const [sx, sy] = R.toScreen(lot.x, lot.y);
+    if (sx < -300 || sx > W + 300 || sy < -300 || sy > H + 300) return;
     const k = R.lotScale();
-    const sel = CP.ui && CP.ui.selected;
-    for (const lot of lots) {
-      if (lot.building) continue;
-      const [sx, sy] = R.toScreen(lot.x, lot.y);
-      if (sx < -300 || sx > W + 300 || sy < -300 || sy > H + 300) continue;
-      const locked = sim.isLocked(lot);
-      const isPrev = R.preview && R.preview.lot === lot;
-      const allowed = sel && CP.BUILDINGS[sel].zones.includes(lot.zone);
-      const o = { locked };
-      if (isPrev) {
-        const ok = R.preview.pv.ok;
-        o.fill = ok ? "rgba(78,240,160,0.55)" : "rgba(255,77,109,0.5)";
-        o.stroke = ok ? "#2fe28a" : "#ff4d6d";
-        o.width = 4;
-        o.solid = true;
-      } else if (sel && !locked) {
-        if (!allowed) o.fill = "rgba(120,120,130,0.18)";
-        o.width = allowed ? 3.4 : 1.6;
-      } else if (lot === R.hoverLot) o.width = 3.6;
-      ctx.globalAlpha = sel && !allowed && !isPrev ? 0.6 : 1;
-      S.lot(ctx, lot, sx, sy, k, o);
-      ctx.globalAlpha = 1;
-      // zone badge (or lock)
-      ctx.font = `700 ${Math.round(CP.clamp(11 * k, 10, 14))}px Inter, "Segoe UI Emoji", sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      const z = CP.ZONES[lot.zone];
-      const txt = locked ? `🔒 ${lot.lock * CP.MISSIONS.unlockEvery} missions` : `${z.icon} ${z.name}${lot.house ? " · home" : ""}`;
-      const tw = ctx.measureText(txt).width + 14;
-      const by = sy + 62 * 0.72 * k + 12;
-      ctx.fillStyle = locked ? "rgba(30,30,40,0.85)" : "rgba(255,255,255,0.92)";
-      ctx.beginPath(); ctx.roundRect(sx - tw / 2, by - 10, tw, 20, 10); ctx.fill();
-      ctx.strokeStyle = locked ? "#555" : z.color; ctx.lineWidth = 2; ctx.stroke();
-      ctx.fillStyle = locked ? "#ddd" : "#1a2038";
-      ctx.fillText(txt, sx, by + 0.5);
-    }
+    const ok = pv.ok;
+    S.lot(ctx, lot, sx, sy, k, { fill: ok ? "rgba(78,240,160,0.5)" : "rgba(255,77,109,0.45)", stroke: ok ? "#2fe28a" : "#ff4d6d", width: 4, solid: true });
+    ctx.font = `700 ${Math.round(CP.clamp(11 * k, 10, 14))}px Inter, "Segoe UI Emoji", sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const z = CP.ZONES[lot.zone];
+    const txt = lot.invalid ? `⛔ ${lot.invalid}` : `${z.icon} ${z.name} land`;
+    const tw = ctx.measureText(txt).width + 14;
+    const by = sy + 62 * 0.72 * k + 12;
+    ctx.fillStyle = "rgba(255,255,255,0.94)";
+    ctx.beginPath(); ctx.roundRect(sx - tw / 2, by - 10, tw, 20, 10); ctx.fill();
+    ctx.strokeStyle = lot.invalid ? "#ff4d6d" : z.color; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = "#1a2038";
+    ctx.fillText(txt, sx, by + 0.5);
   }
 
+  // keep scenery off the lots you can see (the zoomed-in district) and off anything you have built
   function nearLot(x, y, r) {
-    for (const lot of sim.lots) if (Math.abs(lot.x - x) < r * 1.8 && Math.abs(lot.y - y) < r) return true;
+    const q = r * 0.62;
+    if (R.focus) for (const lot of R.focus.lots) if (Math.abs(lot.x - x) < q * 1.8 && Math.abs(lot.y - y) < q) return true;
+    for (const b of sim.buildings) if (Math.abs(b.x - x) < q * 1.8 && Math.abs(b.y - y) < q) return true;
     return false;
   }
   // harmful effect circles (for unhappy homes)
@@ -405,6 +460,7 @@
       for (let bx = bx0; bx <= bx1; bx++)
         for (let by = by0; by <= by1; by++)
           for (const it of world.cell(bx, by).items) {
+            if (it.zk && !R.layers[it.zk]) continue; // its zone layer is switched off
             if (nearLot(it.x, it.y, 620)) continue; // keep lots and player buildings unobstructed
             items.push(it);
           }
@@ -414,7 +470,7 @@
     // existing homes on lots outside the zoomed-in district
     if (z >= 0.045) for (const lot of sim.lots) if (lot.house && lot.d !== R.focus) items.push({ type: "lothouse", lot, x: lot.x, y: lot.y });
     for (const p of R.props) items.push({ type: "prop", p, x: p.x, y: p.y, sortY: p.kind === "path" ? -1e9 : p.y }); // paths are ground: drawn under everything
-    for (const r of CP.residents.list) if (!r.hidden) items.push({ type: "res", r, x: r.x, y: r.y });
+    if (R.focus || z >= 0.06) for (const r of CP.residents.list) if (!r.hidden) items.push({ type: "res", r, x: r.x, y: r.y });
     items.sort((a, b) => (a.sortY !== undefined ? a.sortY : a.y) - (b.sortY !== undefined ? b.sortY : b.y));
 
     ctx.globalAlpha = alpha;
@@ -455,7 +511,7 @@
         const r = it.r;
         S.resident(ctx, sx, sy, uR, r.look, { phase: r.phase, moving: r.moving, dir: r.dir, talk: r.talking ? t : 0 });
         const icon = r.complaint ? "😠" : r.icon;
-        if (R.showNeeds && icon) needIcon(sx, sy - 100 * uR * (r.look.extra.small ? 0.82 : 1) - 18 - Math.sin(t * 3 + r.d.id) * 2.5, icon, r);
+        if (R.showNeeds && icon && (r.talking || r.complaint)) needIcon(sx, sy - 100 * uR * (r.look.extra.small ? 0.82 : 1) - 18 - Math.sin(t * 3 + r.d.id) * 2.5, icon, r);
       }
     }
     // unhappy faces over harmed homes
@@ -471,12 +527,6 @@
         ctx.fillStyle = "#ffd166";
         ctx.beginPath(); ctx.arc(sx, sy, 3, 0, 7); ctx.fill();
         ctx.strokeStyle = "#0b1020"; ctx.lineWidth = 1.2; ctx.stroke();
-      }
-    } else if (z > 0.09) {
-      for (const l of CP.LANDMARKS) {
-        const [sx, sy] = R.toScreen(l.pos[0], l.pos[1]);
-        if (sx < -100 || sx > W + 100 || sy < -100 || sy > H + 100) continue;
-        label(l.name, sx, sy + 22);
       }
     }
     ctx.globalAlpha = 1;
@@ -498,10 +548,11 @@
     ctx.fillText(icon, sx, sy + 0.5);
   }
 
-  function label(text, sx, sy, dot, sym) {
+  function label(text, sx, sy, dot, sym, edge) {
     const w = ctx.measureText(text).width + 14 + (dot ? 18 : 0);
-    ctx.fillStyle = "rgba(8,12,30,0.82)";
+    ctx.fillStyle = "rgba(8,12,30,0.86)";
     ctx.beginPath(); ctx.roundRect(sx - w / 2, sy - 11, w, 22, 11); ctx.fill();
+    if (edge) { ctx.strokeStyle = edge; ctx.lineWidth = 2.5; ctx.stroke(); }
     if (dot) {
       ctx.fillStyle = dot;
       ctx.beginPath(); ctx.arc(sx - w / 2 + 12, sy, 7, 0, 7); ctx.fill();
@@ -527,8 +578,8 @@
       const [sx, sy] = R.toScreen(d.label[0], d.label[1]);
       if (sx < -80 || sx > W + 80 || sy < -40 || sy > H + 40) continue;
       if (d === R.focus) continue; // its name is on the profile card
-      const ov = R.overlayMetric !== null ? CP.bandOf(d.score[R.overlayMetric]) : null;
-      label(d.name, sx, sy + 16, ov ? ov.color : null, ov ? ov.sym : null);
+      const ov = CP.bandOf(R.overlayMetric !== null ? d.score[R.overlayMetric] : d.overall);
+      label(d.name, sx, sy + 16, ov ? ov.color : null, ov ? ov.sym : null, d.color);
     }
     // mission pins
     for (const p of R.pins) {
@@ -552,11 +603,72 @@
     ctx.globalAlpha = 1;
   }
 
+  // Existing infrastructure from OpenStreetMap: real hospitals, libraries, schools and C-Train stations. They are already
+  // built and already counted in the real CEI ratings, so they show as small round badges and keep lots clear.
+  const SVC = {
+    hospital: { e: "🏥", c: "#e53935", z: 0, s: 1.25 },
+  };
+  // Important landmarks: one round badge each. Tier 1 shows at every zoom, tier 2 once you are closer. Hover for the name.
+  const LM = {
+    calgaryTower: ["🗼", 1], saddledome: ["🏟️", 1], stampede: ["🎪", 1], zoo: ["🦁", 1], campus: ["🎓", 1], stadium: ["🏈", 1],
+    mall: ["🛍️", 1], skiJump: ["⛷️", 1], heritage: ["🚂", 1], airport: ["✈️", 1],
+    cityHall: ["🏛️", 2], peaceBridge: ["🌉", 2], spark: ["🔬", 2], fort: ["🏰", 2], library: ["📚", 2], bow: ["🏙️", 2],
+  };
+  R.landmarkBadges = function () {
+    const z = R.cam.z, out = [];
+    for (const l of CP.LANDMARKS) {
+      const k = LM[l.kind];
+      if (!k || (k[1] === 2 && z < 0.09)) continue;
+      const [sx, sy] = R.toScreen(l.pos[0], l.pos[1]);
+      if (sx < -20 || sx > W + 20 || sy < -20 || sy > H + 20) continue;
+      out.push({ l, e: k[0], sx, sy, r: CP.clamp(z * 120, 10, 15) });
+    }
+    return out;
+  };
+  R.landmarkAt = (px, py) => R.landmarkBadges().find((b) => Math.hypot(px - b.sx, py - b.sy) <= b.r + 4) || null;
+  function drawLandmarks(map) {
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.globalAlpha = map;
+    for (const b of R.landmarkBadges()) {
+      ctx.fillStyle = "#fff";
+      ctx.strokeStyle = "#f2b01e";
+      ctx.lineWidth = 2.4;
+      ctx.beginPath(); ctx.arc(b.sx, b.sy, b.r, 0, 7); ctx.fill(); ctx.stroke();
+      ctx.font = `${Math.round(b.r * 1.1)}px "Segoe UI Emoji","Apple Color Emoji",sans-serif`;
+      ctx.fillStyle = "#000";
+      ctx.fillText(b.e, b.sx, b.sy + 1);
+    }
+    ctx.globalAlpha = 1;
+  }
+  function drawServices(z, map) {
+    if (!sim.existing) return;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    for (const e of sim.existing) {
+      const k = SVC[e.kind];
+      if (!k || z < k.z) continue;
+      if (!(e.kind === "transit" ? R.layers.transit : R.layers.amenities)) continue; // layer switched off
+      const [sx, sy] = R.toScreen(e.x, e.y);
+      if (sx < -20 || sx > W + 20 || sy < -20 || sy > H + 20) continue;
+      const r = CP.clamp(z * 120, 9, 15) * k.s;
+      ctx.globalAlpha = map * (R.focus && e.d !== R.focus ? 0.55 : 1);
+      ctx.fillStyle = "#fff";
+      ctx.strokeStyle = k.c;
+      ctx.lineWidth = 2.4;
+      ctx.beginPath(); ctx.arc(sx, sy, r, 0, 7); ctx.fill(); ctx.stroke();
+      ctx.font = `${Math.round(r * 1.15)}px "Segoe UI Emoji","Apple Color Emoji",sans-serif`;
+      ctx.fillStyle = "#000";
+      ctx.fillText(k.e, sx, sy + 1);
+    }
+    ctx.globalAlpha = 1;
+  }
+
   // dawn -> bright day -> dusk over the term
   function drawDaylight(pcx, pcy, pr) {
     if (R.dayFrac === null) return;
     const f = CP.clamp(R.dayFrac, 0, 1);
-    const a = 0.3 * Math.pow(1 - Math.sin(Math.PI * f), 1.6);
+    const a = 0.09 * Math.pow(1 - Math.sin(Math.PI * f), 1.6);
     if (a < 0.01) return;
     const k = f; // dawn blue -> dusk orange-purple
     const r = CP.lerp(30, 120, k), g = CP.lerp(45, 40, k), b = CP.lerp(120, 70, k);

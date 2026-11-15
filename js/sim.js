@@ -11,6 +11,7 @@
     districts: [],
     lots: [],
     buildings: [], // everything the player has placed
+    removals: [], // existing clusters the player has removed: {cl, x, y, d, spec, removal: true}
     penalties: [], // active random-event damage: {d, m, amount, ev, fixed}
     protests: new Map(), // district id -> seconds left
     budget: CP.START_BUDGET,
@@ -241,14 +242,10 @@
   // ---------- homes and lots (need the world module, so they are set up after it loads) ----------
   sim.initWorld = function () {
     const world = CP.world, B = world.CELL, b = D.bounds;
-    const W = { house: 1, midrise: 3, tower: 6 };
-    for (let bx = Math.floor(b[0] / B); bx <= Math.floor(b[2] / B); bx++)
-      for (let by = Math.floor(b[1] / B); by <= Math.floor(b[3] / B); by++) {
-        const c = world.cell(bx, by);
-        if (!c.t || !W[c.cls]) continue;
-        const d = sim.districtAt(c.cx, c.cy) || c.t.d;
-        d.homes.push({ x: c.cx, y: c.cy, w: W[c.cls], bx, by });
-      }
+    for (const h of world.homeSites()) {
+      const d = sim.districtAt(h.x, h.y);
+      if (d) d.homes.push(h);
+    }
     for (const d of sim.districts) {
       if (!d.homes.length) d.homes = d.tracts.map((t) => ({ x: t.c[0], y: t.c[1], w: 1 }));
       d.homeW = d.homes.reduce((a, h) => a + h.w, 0);
@@ -256,48 +253,67 @@
     makeLots();
   };
 
-  // 4-6 lots per district, spread out near its centre, away from water, highways and landmarks
-  function makeLots() {
-    const world = CP.world;
-    const rand = CP.rng(1875);
-    const inside = (d, x, y, m) =>
-      sim.districtAt(x, y) === d && sim.districtAt(x - m, y) === d && sim.districtAt(x + m, y) === d &&
-      sim.districtAt(x, y - m * 0.6) === d && sim.districtAt(x, y + m * 0.6) === d;
-    let id = 0;
-    for (const d of sim.districts) {
-      const zones = d.def.lots.split("");
-      const cands = [];
-      for (let x = d.bbox[0]; x <= d.bbox[2]; x += 220)
-        for (let y = d.bbox[1]; y <= d.bbox[3]; y += 220)
-          if (sim.districtAt(x, y) === d) cands.push([x, y]);
-      const pick = (spacing, margin, strict) => {
-        const got = [];
-        const ok = cands.filter(([x, y]) => inside(d, x, y, margin) && !world.waterAt(x, y, strict ? 500 : 250) &&
-          !world.highwayAt(x, y, strict ? 420 : 200) && !world.landmarkNear(x, y, strict ? 1 : 0.6));
-        ok.sort((a, b) => CP.dist(a[0], a[1], d.label[0], d.label[1]) - CP.dist(b[0], b[1], d.label[0], d.label[1]));
-        for (const p of ok) {
-          if (got.length >= zones.length) break;
-          if (got.every((q) => Math.abs(q[0] - p[0]) / 1.9 + Math.abs(q[1] - p[1]) > spacing)) got.push(p);
-        }
-        return got;
-      };
-      let pts = pick(1050, 650, true);
-      if (pts.length < Math.min(4, zones.length)) pts = pick(950, 450, false);
-      if (pts.length < Math.min(4, zones.length)) pts = pick(820, 250, false);
-      d.lots = pts.map(([x, y], i) => {
-        const zone = zones[i];
-        const lot = {
-          id: id++, d, x, y, zone, origZone: zone, building: null,
-          house: zone === "R" && rand() < 0.55, // an existing home: building here means demolishing it
-          lock: i >= 4 ? i - 3 : 0, // the 5th and 6th lots open as contracts are completed
-        };
-        sim.lots.push(lot);
-        return lot;
-      });
+  // Existing infrastructure: real hospitals, libraries, schools and C-Train stations from OpenStreetMap, filed under the
+  // district they stand in. They are already built (and already counted in the real CEI ratings), so lots keep clear of them.
+  sim.existing = [];
+  function indexExisting() {
+    const G = CP.GEO;
+    const add = (kind, x, y, name) => {
+      const d = sim.districtAt(x, y);
+      if (!d) return;
+      const e = { kind, x, y, name: name || "", d };
+      sim.existing.push(e);
+      d.existing.push(e);
+    };
+    for (const d of sim.districts) d.existing = [];
+    for (const p of G.poi) add(p.kind, p.x, p.y, p.name);
+    for (const st of G.stations) add("transit", st.x, st.y, st.name);
+    // landmark hospitals/libraries from the hand-made list that OSM didn't tag
+    for (const l of CP.LANDMARKS) {
+      const kind = l.kind === "hospital" || l.kind === "kidsHospital" ? "hospital" : l.kind === "library" ? "library" : null;
+      if (kind && !sim.existing.some((e) => e.kind === kind && CP.dist(e.x, e.y, l.pos[0], l.pos[1]) < 500)) add(kind, l.pos[0], l.pos[1], l.name);
     }
   }
+  const nearExisting = (x, y, r) =>
+    sim.existing.some((e) => Math.abs(e.x - x) < r && Math.abs(e.y - y) < r && CP.dist(e.x, e.y, x, y) < r) ||
+    CP.world.clusters.some((c) => c.kind !== "P" && Math.abs(c.x - x) < 560 && Math.abs(c.y - y) < 560 && CP.dist(c.x, c.y, x, y) < 560);
+  // does a real zone code match the lot's planned zone? (R/C/I match their own land use; open space = parks or unzoned land)
+  const zoneFits = (want, code) => (want === "O" ? code === "P" || code === "" : code === want);
+
+  // No pre-set lots: the player picks the spot. Every district starts with an empty lot list; a lot is created where a
+  // building is actually placed (see sim.freeLot / sim.place). indexExisting() still files the real facilities by district.
+  function makeLots() {
+    indexExisting();
+    for (const d of sim.districts) d.lots = [];
+  }
+
+  // What can be built at a point? Takes its zone from the real land use under it; blocked on water, roads, the existing
+  // clusters (remove them first), real facilities and your own buildings.
+  const SNAP = 150;
+  const ZONE_OF = { R: "R", C: "C", I: "I", P: "O", "": "O" };
+  sim.siteCheck = function (d, x, y) {
+    const world = CP.world;
+    if (sim.districtAt(x, y) !== d) return "Outside this district.";
+    const code = world.zoneAt(x, y);
+    if (code === "W" || world.waterAt(x, y, 90)) return "That's water.";
+    if (world.highwayAt(x, y, 70)) return "That's a road.";
+    for (const c of world.clusters) if (c.kind !== "P" && !c.removed && CP.dist(c.x, c.y, x, y) < (c.r || 420) + 120) return `The ${c.label.toLowerCase()} is here. Remove it first (click the zone).`;
+    for (const e of sim.existing) if (e.kind !== "school" && CP.dist(e.x, e.y, x, y) < 260) return `There's a real ${e.kind === "transit" ? "C-Train station" : e.kind} here.`;
+    for (const b of sim.buildings) if (CP.dist(b.x, b.y, x, y) < 420) return "Too close to another building.";
+    for (const l of CP.LANDMARKS) if (CP.dist(l.pos[0], l.pos[1], x, y) < 380) return `${l.name} is here.`;
+    return null;
+  };
+  // a (virtual) lot at the snapped cursor position, with the zone of the land under it
+  sim.freeLot = function (d, wx, wy) {
+    const x = Math.round(wx / SNAP) * SNAP, y = Math.round(wy / SNAP) * SNAP;
+    const code = CP.world.zoneAt(x, y);
+    const zone = ZONE_OF[code] || "O";
+    const lot = { id: `v${x},${y}`, d, x, y, zone, origZone: zone, building: null, house: false, lock: 0, virtual: true };
+    lot.invalid = sim.siteCheck(d, x, y);
+    return lot;
+  };
   sim.unlockedTier = 0;
-  sim.isLocked = (lot) => lot.lock > sim.unlockedTier;
+  sim.isLocked = () => false; // no locked land any more: you can build anywhere that is free
 
   // share of a district's homes inside a circle
   function homeFrac(d, x, y, r) {
@@ -326,12 +342,12 @@
   const buffered = (b, list) => list.some((p) => p !== b && CP.BUILDINGS[p.type].buffer && CP.dist(p.x, p.y, b.x, b.y) < CP.PARK_BUFFER);
 
   // adds per district for a list of buildings (plus the active event penalties)
-  function contributions(list) {
+  function contributions(list, extra) {
     const add = sim.districts.map(() => new Array(ND).fill(0));
     let harmedHomes = 0, helpedHomes = 0;
     const harm = []; // [{b, homes, buffered}]
-    for (const b of list) {
-      const spec = CP.BUILDINGS[b.type], own = add[b.d.id];
+    for (const b of list.concat(sim.removals, extra || [])) {
+      const spec = b.removal ? b.spec : CP.BUILDINGS[b.type], own = add[b.d.id];
       for (let i = 0; i < ND; i++) own[i] += spec.gain[i];
       if (b.demolished) for (let i = 0; i < ND; i++) own[i] += CP.DEMOLISH.gain[i];
       if (b.rezoned) own[3] -= CP.REZONE.goodwill;
@@ -354,7 +370,7 @@
       }
       if (neg) harmedHomes += homes * (a.harm ? buf : 1);
       if (pos) helpedHomes += homes;
-      if (neg) harm.push({ b, homes: Math.round(homes), buffered: buf < 1 });
+      if (neg && !b.removal) harm.push({ b, homes: Math.round(homes), buffered: buf < 1 });
     }
     for (const p of sim.penalties) if (!p.fixed) add[p.d.id][p.m] -= p.amount;
     return { add, harm, harmedHomes: Math.round(harmedHomes), helpedHomes: Math.round(helpedHomes) };
@@ -382,7 +398,7 @@
     return m;
   };
   sim.upkeep = () => sim.buildings.reduce((a, b) => a + (CP.BUILDINGS[b.type].upkeep || 0), 0);
-  sim.income = () => CP.INCOME_PER_MIN + sim.buildings.reduce((a, b) => a + (CP.BUILDINGS[b.type].income || 0), 0);
+  sim.income = () => (CP.INCOME_PER_MIN + sim.buildings.reduce((a, b) => a + (CP.BUILDINGS[b.type].income || 0), 0) + sim.removals.reduce((a, r) => a + (r.spec.income || 0), 0)) * (CP.traffic ? CP.traffic.mult : 1);
   sim.netPerMin = () => sim.income() - sim.upkeep();
 
   // ---------- placing buildings ----------
@@ -396,7 +412,8 @@
     const out = { lot, d: lot.d, ok: false, base: sim.baseCost(type, lot.d), demolish: lot.house ? CP.DEMOLISH.cost : 0, rezone: 0 };
     out.allowed = spec.zones.includes(lot.zone);
     out.cost = out.base + out.demolish;
-    if (lot.building) return Object.assign(out, { why: `This lot already has a ${CP.BUILDINGS[lot.building.type].name}.` });
+    if (lot.building) return Object.assign(out, { why: `This spot already has a ${CP.BUILDINGS[lot.building.type].name}.` });
+    if (lot.invalid) return Object.assign(out, { blocked: true, why: lot.invalid });
     if (sim.isLocked(lot)) return Object.assign(out, { locked: true, why: `Locked. Opens after ${lot.lock * CP.MISSIONS.unlockEvery} completed missions.` });
     const pr = sim.protests.get(lot.d.id);
     if (pr > 0) return Object.assign(out, { protest: true, why: `Residents are protesting. Building here resumes in ${Math.ceil(pr)} s.` });
@@ -457,12 +474,13 @@
     if (b.rezoned) lot.zone = check.toZone;
     lot.house = false;
     lot.building = b;
+    if (lot.virtual && !lot.registered) { lot.registered = true; lot.id = 5000 + sim.nextId; sim.lots.push(lot); lot.d.lots.push(lot); }
     sim.buildings.push(b);
     sim.budget -= check.cost;
     sim.spent += check.cost;
     // a matching building recovers event damage in its district
     for (const p of sim.penalties)
-      if (!p.fixed && p.d === d && CP.EVENT_TYPES[p.ev].fix.includes(type)) { p.fixed = true; b.fixed.push(p); }
+      if (!p.fixed && p.d === d && CP.EVENT_TYPES[p.ev] && CP.EVENT_TYPES[p.ev].fix.includes(type)) { p.fixed = true; b.fixed.push(p); }
     apply();
     const h = sim.harm.find((x) => x.b === b);
     if (h && !h.buffered && CP.BUILDINGS[type].area.harm && h.homes >= CP.PROTEST.homes) {
@@ -472,12 +490,89 @@
     return { ok: true, b, d, before, after: d.score.slice(), overallBefore, harm: h, check };
   };
 
+  // ---------- removing existing clusters and rezoning zones ----------
+  const removalRec = (cl) => {
+    const k = CP.CLUSTER_KINDS[cl.kind];
+    if (!cl.d) cl.d = sim.districtAt(cl.x, cl.y) || sim.districts[0];
+    return { removal: true, cl, x: cl.x, y: cl.y, d: cl.d, spec: { gain: k.gain, area: k.area, income: k.income, traffic: k.traffic } };
+  };
+  // a NEW cluster of a kind: the opposite of removing it, plus the goodwill hit of rezoning
+  const addRec = (cl, kind) => {
+    const k = CP.CLUSTER_KINDS[kind];
+    if (!cl.d) cl.d = sim.districtAt(cl.x, cl.y) || sim.districts[0];
+    const gain = k.gain.map((v) => -v);
+    gain[3] -= CP.REZONE.goodwill;
+    return { removal: true, added: true, cl, x: cl.x, y: cl.y, d: cl.d, spec: { gain, area: k.area ? { r: k.area.r, gain: k.area.gain.map((v) => -v), what: k.area.what } : null, income: -(k.income || 0), traffic: -(k.traffic || 0) } };
+  };
+  // what would change with these hypothetical records
+  function previewRecs(recs, cost, own) {
+    const c = contributions(sim.buildings, recs);
+    const diffs = [];
+    let overallAfter = 0;
+    for (const d of sim.districts) {
+      const after = d.base.map((v, i) => CP.clamp(v + c.add[d.id][i], 0, 100));
+      overallAfter += after.reduce((a, v) => a + v, 0) / ND;
+      const delta = after.map((v, i) => v - d.score[i]);
+      if (delta.some((v) => Math.abs(v) >= 0.5)) diffs.push({ d, before: d.score.slice(), after, delta, own: d === own });
+    }
+    diffs.sort((a, b) => b.own - a.own || Math.max(...b.delta.map(Math.abs)) - Math.max(...a.delta.map(Math.abs)));
+    const homes = recs.reduce((a, r) => a + (r.spec.area ? fracsFor(r.x, r.y, r.spec.area.r).reduce((q, [d, f]) => q + f * d.households, 0) : 0), 0);
+    return { cost, ok: sim.canAfford(cost), diffs, homes: Math.round(homes), overallBefore: sim.overall(), overallAfter: overallAfter / sim.districts.length };
+  }
+  sim.removalPreview = function (cl) {
+    const k = CP.CLUSTER_KINDS[cl.kind];
+    return Object.assign(previewRecs([removalRec(cl)], k.cost, cl.d), { cl, k });
+  };
+  sim.zonePreview = function (zone, toKind, own) {
+    const live = zone.clusters.filter((c) => !c.removed && c.kind !== "P");
+    const pos = live[0] || CP.world.zoneAnchor(zone);
+    const hyp = { x: pos.x, y: pos.y, d: sim.districtAt(pos.x, pos.y) || own };
+    const recs = live.map(removalRec).concat([addRec(hyp, toKind)]);
+    return Object.assign(previewRecs(recs, CP.ZONE_REZONE.cost, own), { zone, toKind });
+  };
+  // remove one cluster: pay, take the buildings off the map, free a lot on that land
+  sim.removeCluster = function (cl) {
+    const k = CP.CLUSTER_KINDS[cl.kind];
+    if (!k || cl.removed) return { ok: false, why: "Nothing to remove." };
+    if (!sim.canAfford(k.cost)) return { ok: false, why: `Not enough budget: removal costs ${CP.money(k.cost)}.` };
+    const overallBefore = sim.overall();
+    const rec = removalRec(cl);
+    const before = cl.d.score.slice();
+    sim.budget -= k.cost;
+    sim.spent += k.cost;
+    CP.world.removeCluster(cl);
+    sim.removals.push(rec);
+    apply();
+    return { ok: true, cl, k, d: cl.d, before, after: cl.d.score.slice(), overallBefore };
+  };
+  // rezone a whole zone: its buildings are cleared and a new cluster of the new land use appears
+  sim.rezoneZone = function (zone, toKind, own) {
+    if (zone.kind === "P" || zone.kind === toKind || !CP.CLUSTER_KINDS[toKind]) return { ok: false, why: "That zone can't be changed to this." };
+    const cost = CP.ZONE_REZONE.cost;
+    if (!sim.canAfford(cost)) return { ok: false, why: `Not enough budget: rezoning costs ${CP.money(cost)}.` };
+    const overallBefore = sim.overall();
+    const live = zone.clusters.filter((c) => !c.removed && c.kind !== "P");
+    const pos = live[0] || CP.world.zoneAnchor(zone);
+    const px = pos.x, py = pos.y;
+    const d = sim.districtAt(px, py) || own;
+    const before = d.score.slice();
+    for (const cl of live) { CP.world.removeCluster(cl); sim.removals.push(removalRec(cl)); }
+    CP.world.setZoneKind(zone, toKind);
+    const nc = CP.world.addCluster(toKind, px, py, zone);
+    sim.removals.push(addRec(nc, toKind));
+    sim.budget -= cost;
+    sim.spent += cost;
+    apply();
+    return { ok: true, zone, toKind, cluster: nc, d, before, after: d.score.slice(), overallBefore, cost };
+  };
+
   // undo a placement: full refund, the lot goes back to how it was
   sim.undo = function (b) {
     const i = sim.buildings.indexOf(b);
     if (i < 0) return false;
     sim.buildings.splice(i, 1);
     b.lot.building = null;
+    if (b.lot.registered) { b.lot.registered = false; sim.lots.splice(sim.lots.indexOf(b.lot), 1); b.lot.d.lots.splice(b.lot.d.lots.indexOf(b.lot), 1); }
     b.lot.zone = b.fromZone;
     b.lot.house = b.demolished;
     sim.budget += b.cost;
@@ -489,10 +584,10 @@
   };
 
   // ---------- random events ----------
-  sim.addPenalty = function (d, m, ev) {
+  sim.addPenalty = function (d, m, ev, forced) {
     const s = d.score[m], idx = CP.bandIndex(s);
-    const amount = idx === 0 ? Math.min(8, s) : CP.clamp(s - ((idx - 1) * 20 + 12), 8, 20); // one band down
-    const p = { d, m, ev, amount, fixed: false };
+    const amount = forced !== undefined ? forced : idx === 0 ? Math.min(8, s) : CP.clamp(s - ((idx - 1) * 20 + 12), 8, 20); // one band down
+    const p = { d, m, ev, amount, fixed: false, before: s };
     sim.penalties.push(p);
     apply();
     return p;

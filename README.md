@@ -34,6 +34,22 @@ No build step and no dependencies.
 
 **Dev hooks** (for testing and the demo): `index.html#play` skips the opening, `&notips` skips the tutorial, `&go` jumps into the first mission's district with a building picked, `&t=30` sets the seconds left, `&event=flood` (or `fire`, `storm`, `tornado`, `rain`, `lightning`, `earthquake`, `collapse`) fires an event, `&orbit` shows the satellite view, and `&end` jumps to the report.
 
+
+## Free placement, zones you can click, map layers
+
+- **No fixed lots.** Pick a building in **Build**, then click anywhere free inside the zoomed-in district. The spot takes its zone from the real land use under the cursor (green ghost = allowed, red = blocked, with the reason). Blocked on water, roads, real facilities, other buildings, and the existing clusters.
+- **Click a zone** (residential, commercial, industrial, park) to inspect it: its size, the district's land-use mix, and what is built in it. **Remove** an existing cluster (existing residential, shopping centre, industrial plant) to clear the land (it costs money and changes the ratings; removing a plant cuts pollution but also jobs and tax), or **rezone** the whole zone to another land use.
+- Nearby existing neighbourhoods are merged into one bigger group, so a district reads as a few clear areas.
+- **Map layers** (bottom right): Residential, Commercial, Industrial, Parks, Amenities, C-Train and Traffic are separate toggles. A layer that is off hides its colour and its buildings. Double-click a layer to see only that one.
+
+## Real map data, zones, traffic and disasters
+
+- **Real geography.** `tools/fetch_osm.py` downloads OpenStreetMap data for Calgary (freeways and arterials, the Bow and Elbow rivers, lakes, parks, the C-Train line and stations, hospitals, libraries, schools and land-use polygons) and writes `js/data/osm.js`. Run `python tools/fetch_osm.py` to refresh it. Map data © OpenStreetMap contributors (ODbL).
+- **Actual zones.** Residential, commercial and industrial land use come from the OSM polygons. Houses, towers and sheds only appear on land with the matching zone, and every building lot sits on land that really has its zone. The **Map layers** panel (bottom right) toggles Zones, Traffic and Services.
+- **Existing infrastructure.** Real hospitals, libraries, schools and C-Train stations are already on the map (Services layer). They are already counted in the real CEI ratings, and lots keep clear of them.
+- **Live traffic.** Thousands of vehicles drive the real roads. Roads are coloured green / amber / red by congestion, which depends on the surrounding land use, the time of day (two rush hours per term), what you build (Jobs Hub and Factory add trips, CTrain stations remove them) and road closures from disasters. Gridlock costs up to 14% of tax revenue.
+- **Disasters stay until you act.** Each event has a place, a radius, homes affected, closed roads and a money drain per minute. After 45 s it escalates: it hurts a second rating and spreads to the next district. End it with the matching building, or pay emergency crews. A fix inside 30 s earns a bonus. The **Events** tab (key `4`) lists active incidents, a flood watch built from the real CEI flood indicator, and history. Good news (a festival, a federal grant) also happens.
+
 ## Decisions (design notes, Phase 0)
 
 - **Timer:** 10 minutes (game, briefing and title all say 10).
