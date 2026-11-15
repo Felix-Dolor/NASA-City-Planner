@@ -66,11 +66,28 @@
     afterCameraMove();
   }
 
+  // screen space left for the map once the panels are placed: [left, right, top, bottom] in px
+  const mobile = () => CP.isMobile();
+  function insets(district) {
+    const top = ($("#topbar").getBoundingClientRect().bottom || 100) + 8;
+    if (mobile()) {
+      if (window.innerWidth > 760) return district ? [10, 260, top, 150] : [310, 10, top, 10]; // landscape phone: side panels
+      return district ? [10, 10, top, 170] : [10, 10, top, Math.round(window.innerHeight * 0.3)];
+    }
+    return district ? [380, 340, Math.max(70, top), 90] : [360, 20, Math.max(79, top), 31];
+  }
+  // fit a world box into the free screen area
+  function fit(b, ins, scale) {
+    const [l, r, t, bt] = ins;
+    const aw = Math.max(160, window.innerWidth - l - r), ah = Math.max(160, window.innerHeight - t - bt);
+    const z = Math.min(aw / (b[2] - b[0]), ah / (b[3] - b[1])) * scale;
+    return { z, dx: (l - r) / 2, dy: (t - bt) / 2 };
+  }
   // the whole city, fitted between the side panel and the right edge
   function cityView() {
     const b = window.CEI_DATA.bounds;
-    const z = Math.min((window.innerWidth - 380) / (b[2] - b[0]), (window.innerHeight - 110) / (b[3] - b[1])) * 0.94;
-    return { x: (b[0] + b[2]) / 2 - 170 / z, y: (b[1] + b[3]) / 2 - 24 / z, z };
+    const { z, dx, dy } = fit(b, insets(false), 0.94);
+    return { x: (b[0] + b[2]) / 2 - dx / z, y: (b[1] + b[3]) / 2 - dy / z, z };
   }
   // one district, fitted between the side panel (left) and its profile card (right)
   function districtView(d) {
@@ -78,10 +95,10 @@
     const pts = d.lots.length ? d.lots : [{ x: d.label[0], y: d.label[1] }];
     const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
     const b = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)], padX = 1500, padY = 1300;
-    const aw = Math.max(320, window.innerWidth - 380 - 340), ah = Math.max(260, window.innerHeight - 150);
-    const z = CP.clamp(Math.min(aw / (b[2] - b[0] + padX * 2), ah / (b[3] - b[1] + padY * 2)), cityView().z * 1.8, 0.22);
+    const f = fit([b[0] - padX, b[1] - padY, b[2] + padX, b[3] + padY], insets(true), 1);
+    const z = CP.clamp(f.z, cityView().z * 1.8, 0.22);
     const cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2;
-    return { x: cx - 20 / z, y: cy + 10 / z, z };
+    return { x: cx - f.dx / z, y: cy - f.dy / z, z };
   }
   game.cityView = cityView;
 
@@ -95,6 +112,7 @@
     flyTo(v.x, v.y, v.z, quick ? 0.6 : 0.9);
     ui.profile(d);
     ui.update();
+    if (mobile()) ui.collapse(true); // give the map the screen on phones
     CP.audio.click();
   };
   game.exitDistrict = function (noFly) {
@@ -339,7 +357,7 @@
         ui.tooltip(ui.previewCard(pv), mouse.x, mouse.y, "card " + (pv.ok ? "ok" : "no"));
       } else ui.tooltip(ui.lotTip(lot), mouse.x, mouse.y);
     } else if (hoverRes) {
-      if (hoverRes.offer) ui.tooltip(`<div class="tt-h">❗ ${CP.esc(hoverRes.name)} · ${CP.esc(hoverRes.d.name)}</div><div>Has a mission for you. Click to talk.</div>`, mouse.x, mouse.y);
+      if (hoverRes.offer) ui.tooltip(`<div class="tt-h">❗ ${CP.esc(hoverRes.name)} · ${CP.esc(hoverRes.d.name)}</div><div>Has a mission for you. ${CP.touch ? "Tap" : "Click"} to talk.</div>`, mouse.x, mouse.y);
       else ui.hideTooltip();
     } else if (d && d !== R.focus) {
       if (ui.selected) {
@@ -366,20 +384,54 @@
   }
 
   // ---------- input ----------
+  // Pointer events cover mouse, touch and pen. One finger pans, two fingers pinch-zoom (and pan), a tap clicks.
+  // On touch there is no hover, so with a building selected the first tap on a lot shows the preview card
+  // and a second tap on the same lot builds.
+  const pointers = new Map();
+  let pinch = null, armedLot = null;
+  const pinchInfo = () => {
+    const [a, b] = [...pointers.values()];
+    return { d: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  };
   function bindInput() {
     canvas.addEventListener("contextmenu", (e) => e.preventDefault());
-    canvas.addEventListener("mousedown", (e) => {
+    canvas.addEventListener("pointerdown", (e) => {
       if (!live()) return;
+      CP.touch = e.pointerType !== "mouse";
+      document.body.classList.toggle("touch", CP.touch);
+      try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size === 2) {
+        pinch = pinchInfo();
+        mouse.dragged = true; // a pinch is never a tap
+        tween = null;
+        ui.hideTooltip();
+        return;
+      }
+      if (pointers.size > 2) return;
       mouse.down = true; mouse.dragged = false;
       mouse.sx = e.clientX; mouse.sy = e.clientY;
+      mouse.x = e.clientX; mouse.y = e.clientY;
     });
-    window.addEventListener("mousemove", (e) => {
+    window.addEventListener("pointermove", (e) => {
+      const p = pointers.get(e.pointerId);
+      if (p) { p.x = e.clientX; p.y = e.clientY; }
+      if (pinch && pointers.size >= 2) {
+        if (!live()) return;
+        const n = pinchInfo();
+        R.cam.x -= (n.x - pinch.x) / R.cam.z; R.cam.y -= (n.y - pinch.y) / R.cam.z;
+        zoomAt(n.x, n.y, n.d / pinch.d);
+        afterCameraMove();
+        pinch = n;
+        return;
+      }
+      if (e.pointerType !== "mouse" && !p) return; // a finger that didn't start on the map
       const dx = e.clientX - mouse.x, dy = e.clientY - mouse.y;
       mouse.x = e.clientX; mouse.y = e.clientY;
-      mouse.over = e.target === canvas;
+      mouse.over = e.pointerType === "mouse" ? e.target === canvas : true;
       mouse.shift = e.shiftKey;
       if (mouse.down && live()) {
-        if (Math.hypot(e.clientX - mouse.sx, e.clientY - mouse.sy) > 5) mouse.dragged = true;
+        if (Math.hypot(e.clientX - mouse.sx, e.clientY - mouse.sy) > (e.pointerType === "mouse" ? 5 : 10)) mouse.dragged = true;
         if (mouse.dragged) {
           tween = null;
           R.cam.x -= dx / R.cam.z; R.cam.y -= dy / R.cam.z;
@@ -389,16 +441,42 @@
       }
       updateHover();
     });
-    window.addEventListener("mouseup", (e) => {
+    const up = (e) => {
+      if (!pointers.has(e.pointerId)) return;
+      pointers.delete(e.pointerId);
+      if (pinch) {
+        if (pointers.size < 2) pinch = null;
+        if (pointers.size === 0) { mouse.down = false; mouse.over = false; canvas.classList.remove("pan"); updateHover(); }
+        else if (pointers.size === 1) { const [q] = [...pointers.values()]; mouse.x = q.x; mouse.y = q.y; } // keep panning with the other finger
+        return;
+      }
       if (!mouse.down) return;
       mouse.down = false;
       canvas.classList.remove("pan");
-      if (!live() || mouse.dragged || e.target !== canvas) return;
-      if (e.button !== 0) { ui.select(null); updateHover(); return; }
-      click(e.clientX, e.clientY, e.shiftKey);
+      if (e.pointerType !== "mouse" && (mouse.dragged || e.type === "pointercancel")) { mouse.over = false; updateHover(); } // no hover card left behind after a swipe
+      if (e.type === "pointercancel" || !live() || mouse.dragged) return;
+      if (e.pointerType === "mouse") {
+        if (e.target !== canvas) return;
+        if (e.button !== 0) { ui.select(null); updateHover(); return; }
+        click(e.clientX, e.clientY, e.shiftKey);
+        return updateHover();
+      }
+      // touch tap: show what's under the finger, then act
+      mouse.x = e.clientX; mouse.y = e.clientY; mouse.over = true;
+      const lot = R.focus && ui.selected && !events.pick(e.clientX, e.clientY) ? R.lotAt(e.clientX, e.clientY) : null;
+      if (lot && (!armedLot || armedLot.lot !== lot || armedLot.type !== ui.selected)) {
+        armedLot = { lot, type: ui.selected };
+        return updateHover();
+      }
+      armedLot = null;
+      click(e.clientX, e.clientY, false);
       updateHover();
-    });
-    canvas.addEventListener("mouseleave", () => { mouse.over = false; updateHover(); });
+      // a tap that just opened something (district, resident) shouldn't leave a hover card over the map
+      if (!R.preview && !events.pick(e.clientX, e.clientY)) { mouse.over = false; ui.hideTooltip(); }
+    };
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    canvas.addEventListener("pointerleave", (e) => { if (e.pointerType === "mouse") { mouse.over = false; updateHover(); } });
     // mouse wheel zooms; touchpad pinch (ctrl+wheel) zooms; touchpad two-finger swipe pans
     canvas.addEventListener("wheel", (e) => {
       e.preventDefault();

@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#02030a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
   <title>CEI-SAT · Make Calgary the most equitable city on the planet</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -26,7 +29,7 @@
         <div class="hint" id="budget-hint"></div>
       </div>
       <div class="stat"><span class="lbl">Term ends in</span><span id="timer" class="val">10:00</span></div>
-      <div class="stat" title="One full day passes over your term"><span class="lbl">Time of day</span><span id="dayclock" class="val">☀️ 7:00 AM</span></div>
+      <div class="stat" id="stat-day" title="One full day passes over your term"><span class="lbl">Time of day</span><span id="dayclock" class="val">☀️ 7:00 AM</span></div>
       <div class="stat stat-eq" title="Calgary's overall equity: the average of all six ratings across every district">
         <span class="lbl">Calgary Equity</span>
         <span class="val"><span id="eq-num">0</span><small>/100</small> <span id="equity"></span></span>
@@ -35,9 +38,9 @@
       <div class="stat" id="stat-upkeep-wrap" title="Running costs of everything you have built"><span class="lbl">Upkeep</span><span id="upkeep" class="val">$0/min</span></div>
     </div>
     <nav id="tabs" class="panel">
-      <button class="tab" data-tab="missions">🎯 Missions <span id="mission-count" class="pill"></span></button>
-      <button class="tab" data-tab="plan">🗺️ Plan</button>
-      <button class="tab" data-tab="build">🏗️ Build</button>
+      <button class="tab" data-tab="missions"><span class="ti">🎯</span> Missions <span id="mission-count" class="pill"></span></button>
+      <button class="tab" data-tab="plan"><span class="ti">🗺️</span> Plan</button>
+      <button class="tab" data-tab="build"><span class="ti">🏗️</span> Build</button>
     </nav>
     <div id="controls" class="panel">
       <span id="alt-wrap" title="Satellite altitude">🛰️ <span id="alt">408 km</span></span>
@@ -49,6 +52,7 @@
 
   <!-- only the active tab's panel is shown -->
   <aside id="panel" class="panel hidden">
+    <button id="panel-min" class="btn small" title="Hide this panel to see the map">▾ Map</button>
     <section id="panel-missions" class="tabpanel">
       <h3>Missions</h3>
       <p class="muted">Residents with a <b class="bang">!</b> have jobs for you. Press <b>Go</b> to jump to a mission's district; finish it to earn its grant. Don't like one? <b>Discard</b> it for a new one.</p>
@@ -90,7 +94,7 @@
     <label>Volume <input type="range" id="set-volume" min="0" max="1" step="0.05" /></label>
     <label class="row"><input type="checkbox" id="set-music" /> Background music</label>
     <label>Scroll &amp; zoom speed <input type="range" id="set-scroll" min="0.3" max="2.5" step="0.1" /></label>
-    <p class="muted small">Touchpad: pinch to zoom, two-finger swipe to pan. Mouse: wheel to zoom, drag to pan.</p>
+    <p class="muted small">Touchpad: pinch to zoom, two-finger swipe to pan. Mouse: wheel to zoom, drag to pan. Touch screen: drag to pan, pinch to zoom, tap to select.</p>
     <button class="btn" id="set-close">Done</button>
   </div>
 

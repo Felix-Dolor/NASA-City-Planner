@@ -9,6 +9,12 @@
   CP.dist = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
   CP.smooth = (t) => t * t * (3 - 2 * t);
 
+  // ---------- device ----------
+  // phone-sized layout (portrait phones and short landscape phones); keep in sync with css/style.css
+  const mq = window.matchMedia("(max-width: 760px), (max-height: 520px)");
+  CP.isMobile = () => mq.matches;
+  CP.touch = window.matchMedia("(pointer: coarse)").matches;
+
   // deterministic hash -> [0,1)
   CP.hash = function (x, y, s) {
     let h = (x * 374761393 + y * 668265263 + (s || 0) * 2147483647) | 0;

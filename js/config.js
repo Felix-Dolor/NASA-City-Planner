@@ -493,6 +493,6 @@
     { id: "go", text: "Start here: press <b>Go</b> on your first mission." },
     { id: "plan", text: "This is the <b>Plan</b> view. The colours show how fair each district is. Your target is outlined in gold. Now open <b>Build</b>." },
     { id: "pick", text: "Pick a building tagged <b>Helps mission</b>." },
-    { id: "lot", text: "Hover a lot: <b>green</b> means allowed. The card shows what will change. Click to build." },
+    { id: "lot", text: CP.touch ? "Tap a lot: <b>green</b> means allowed. The card shows what will change. Tap it again to build." : "Hover a lot: <b>green</b> means allowed. The card shows what will change. Click to build." },
   ];
 })();

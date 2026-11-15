@@ -40,7 +40,7 @@
     });
     bl.addEventListener("mouseover", (e) => {
       const b = e.target.closest(".bld");
-      if (!b) return;
+      if (!b || CP.touch) return; // no hover on touch screens; the lot preview card shows the details
       ui.barTip = true;
       ui.tooltipAbove(buildTip(b.dataset.type), b.getBoundingClientRect());
     });
@@ -96,7 +96,11 @@
     // tabs, top bar, misc
     $("#tabs").addEventListener("click", (e) => {
       const b = e.target.closest(".tab");
-      if (b) { ui.setTab(b.dataset.tab); CP.audio.click(); }
+      if (!b) return;
+      // on phones, tapping the open tab again folds its sheet away to show the map
+      if (CP.isMobile() && b.dataset.tab === ui.tab && b.dataset.tab !== "build") ui.collapse(!document.body.classList.contains("panel-min"));
+      else ui.setTab(b.dataset.tab);
+      CP.audio.click();
     });
     const snd = $("#btn-sound");
     snd.onclick = () => (snd.textContent = CP.audio.toggle() ? "🔇" : "🔊");
@@ -112,6 +116,7 @@
     $("#set-scroll").value = ui.scrollSpeed;
     $("#set-scroll").oninput = (e) => { ui.scrollSpeed = +e.target.value; localStorage.setItem("cei-scroll", e.target.value); };
     $("#btn-city").onclick = () => CP.game.exitDistrict();
+    $("#panel-min").onclick = () => ui.collapse(true);
     $("#undo").onclick = () => CP.game.undo();
     $("#coach .coach-skip").onclick = () => ui.endTutorial();
     $("#dcm-next").onclick = () => ui.dcmNext();
@@ -166,8 +171,13 @@
       <div class="tt-cost ${sim.canAfford(cost) ? "" : "neg"}">Cost ${CP.money(cost)}${R.focus && R.focus.def.cost !== 1 ? ` in ${CP.esc(R.focus.name)}` : ""} · ${upkeepText(b)}</div>`;
   }
 
+  // phones: fold the Missions / Plan sheet away (tap its tab to bring it back)
+  ui.collapse = function (on) {
+    document.body.classList.toggle("panel-min", !!on);
+  };
   ui.setTab = function (tab) {
     ui.tab = tab;
+    ui.collapse(false);
     const on = CP.game && CP.game.started && !CP.game.ended;
     $("#panel").classList.toggle("hidden", !on || tab === "build");
     $("#buildbar").classList.toggle("hidden", !on || tab !== "build");
@@ -212,7 +222,7 @@
       return `<tr class="${cls}"><td>${ind.label}</td><td>${CP.fmtIndicator(ind, v)}</td><td class="muted">${CP.fmtIndicator(ind, avg)}</td></tr>`;
     }).join("");
     $("#indicators").innerHTML = `<table><thead><tr><th>Real indicator (2024 CEI)</th><th>${d ? CP.esc(d.name) : "Calgary"}</th><th>Calgary</th></tr></thead><tbody>${rows}</tbody></table>
-      <p class="muted small">${d ? "Green = better than the Calgary average, red = worse." : "Hover a district to compare it with the city."} Your buildings change the game ratings, not these 2024 measurements.</p>`;
+      <p class="muted small">${d ? "Green = better than the Calgary average, red = worse." : (CP.touch ? "Tap" : "Hover") + " a district to compare it with the city."} Your buildings change the game ratings, not these 2024 measurements.</p>`;
   };
 
   // ---------- refresh everything that depends on scores or money ----------
@@ -259,8 +269,8 @@
       list.appendChild(el);
     });
     $("#build-help").innerHTML = R.focus
-      ? `🏗️ Building in <b>${CP.esc(R.focus.name)}</b>${R.focus.def.cost !== 1 ? ` (land costs ×${R.focus.def.cost})` : ""}. Pick a building, then click a lot. Hover a card for details.`
-      : "🏗️ Pick a building, then click a district to zoom in and place it on a lot. Hover a card for details.";
+      ? `🏗️ Building in <b>${CP.esc(R.focus.name)}</b>${R.focus.def.cost !== 1 ? ` (land costs ×${R.focus.def.cost})` : ""}. Pick a building, then ${CP.touch ? "tap a lot to preview it" : "click a lot. Hover a card for details"}.`
+      : `🏗️ Pick a building, then ${CP.touch ? "tap" : "click"} a district to zoom in and place it on a lot.${CP.touch ? "" : " Hover a card for details."}`;
 
     // Plan: city-wide band per metric
     CP.DOMAINS.forEach((_, i) => ($("#mchip-" + i).innerHTML = CP.chip(sim.metricAvg(i), true)));
@@ -405,7 +415,7 @@
       html += `<div class="tt-row"><span>${CP.DOMAINS[i].icon} ${CP.DOMAINS[i].label}</span><span>${CP.chip(before)}${CP.bandIndex(before) === CP.bandIndex(after) ? ' <span class="pos">▲ ' + sgn(after - before) + "</span>" : arrow + CP.chip(after)}</span></div>`;
     });
     html += `<div class="tt-cost ${short ? "neg" : ""}">Cost ${CP.money(cost)}${short ? " · not enough budget" : ""} · upkeep ${CP.money(b.upkeep)}/min</div>`;
-    return html + `<div class="muted" style="margin-top:5px">Click to zoom in and choose a lot.</div>`;
+    return html + `<div class="muted" style="margin-top:5px">${CP.touch ? "Tap" : "Click"} to zoom in and choose a lot.</div>`;
   };
   // the net-effect card shown while hovering a lot with a building selected
   ui.previewCard = function (pv) {
@@ -432,7 +442,7 @@
     html += `<div class="tt-row tt-all"><span>Calgary Equity</span><span>${pv.overallBefore.toFixed(1)} → <b class="${dv >= 0 ? "pos" : "neg"}">${pv.overallAfter.toFixed(1)}</b></span></div>`;
     html += `<div class="tt-cost ${pv.short ? "neg" : ""}">Cost <b>${CP.money(pv.cost)}</b>${pv.demolish ? ` (incl. ${CP.money(pv.demolish)} demolition)` : ""}${pv.rezone ? ` (incl. ${CP.money(pv.rezone)} rezoning)` : ""} · upkeep ${CP.money(b.upkeep)}/min${b.income ? ` · tax +${CP.money(b.income)}/min` : ""}</div>`;
     if (pv.short) html += `<div class="neg">${pv.why}</div>`;
-    else if (pv.ok) html += `<div class="muted" style="margin-top:4px">Click to build. You can undo for ${CP.UNDO_SECONDS} s.</div>`;
+    else if (pv.ok) html += `<div class="${CP.touch ? "tap-again" : "muted"}" style="margin-top:4px">${CP.touch ? "Tap the lot again to build." : "Click to build."} You can undo for ${CP.UNDO_SECONDS} s.</div>`;
     return html;
   };
   ui.lotTip = function (lot) {
@@ -472,7 +482,7 @@
     const dm = CP.DOMAINS[dis.p.m];
     return `<div class="tt-h">${dis.t.icon} ${dis.t.name} in ${CP.esc(dis.d.name)}</div><div>${CP.esc(dis.text)}</div>
       <div class="neg" style="margin-top:4px">💸 No revenue · 😟 happiness falling · ${dm.icon} ${dm.short} −${Math.round(dis.p.amount)}</div>
-      <div class="tt-cost">Click to repair · ${CP.money(dis.cost)}</div>`;
+      <div class="tt-cost">${CP.touch ? "Tap" : "Click"} to repair · ${CP.money(dis.cost)}</div>`;
   };
 
   // ---------- repair card ----------
@@ -645,9 +655,10 @@
     el.style.visibility = hidden ? "hidden" : "visible";
     if (!a || !a.r) { el.style.left = window.innerWidth / 2 - el.offsetWidth / 2 + "px"; el.style.top = "92px"; el.dataset.side = "none"; return; }
     const r = a.r;
+    if (CP.isMobile() && a.side === "right") a.side = r.top > window.innerHeight / 2 ? "above" : "below";
     el.dataset.side = a.side;
     if (a.side === "below") { el.style.left = CP.clamp(r.left + r.width / 2 - el.offsetWidth / 2, 8, window.innerWidth - el.offsetWidth - 8) + "px"; el.style.top = r.bottom + 14 + "px"; }
-    else if (a.side === "above") { el.style.left = CP.clamp(r.left + r.width / 2 - el.offsetWidth / 2, 8, window.innerWidth - el.offsetWidth - 8) + "px"; el.style.top = r.top - el.offsetHeight - 16 + "px"; }
+    else if (a.side === "above") { el.style.left = CP.clamp(r.left + r.width / 2 - el.offsetWidth / 2, 8, window.innerWidth - el.offsetWidth - 8) + "px"; el.style.top = Math.max(8, r.top - el.offsetHeight - 16) + "px"; }
     else { el.style.left = Math.min(window.innerWidth - el.offsetWidth - 8, r.right + 16) + "px"; el.style.top = Math.max(70, r.top + r.height / 2 - el.offsetHeight / 2) + "px"; }
   }
 
@@ -876,8 +887,8 @@
         </div>
       </div>
       <div class="rep-h">Your Calgary vs the real Calgary (2024 Calgary Equity Index)</div>
-      <table class="rep-cmp"><thead><tr><th></th><th>Real Calgary 2024</th><th>Your Calgary</th><th>Change</th></tr></thead><tbody>${rows}
-        <tr class="tot"><td>⚖️ Calgary Equity</td><td>${CP.chip(sim.startOverall, true)}</td><td>${CP.chip(overall, true)}</td><td>${dOv >= 0 ? `<span class="pos">▲ ${sgn(dOv, 1)}</span>` : `<span class="neg">▼ ${sgn(dOv, 1)}</span>`}</td></tr></tbody></table>
+      <div class="rep-scroll"><table class="rep-cmp"><thead><tr><th></th><th>Real Calgary 2024</th><th>Your Calgary</th><th>Change</th></tr></thead><tbody>${rows}
+        <tr class="tot"><td>⚖️ Calgary Equity</td><td>${CP.chip(sim.startOverall, true)}</td><td>${CP.chip(overall, true)}</td><td>${dOv >= 0 ? `<span class="pos">▲ ${sgn(dOv, 1)}</span>` : `<span class="neg">▼ ${sgn(dOv, 1)}</span>`}</td></tr></tbody></table></div>
       <p class="rep-line">${gainLine}</p>
       <p class="rep-line">${lossLine}</p>
       <p class="muted small">"Real Calgary" is the starting city, built from all 288 census tracts in the City of Calgary's 2024 Calgary Equity Index (flipped so a higher number is fairer).</p>
