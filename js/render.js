@@ -17,6 +17,7 @@
     pins: [], // mission pins: [{d, icon}]
     preview: null, // {lot, type, pv} ghost building on a lot
     hoverLot: null,
+    hoverDisaster: null,
     flashes: [], // [{d, t, color}] event flashes
     showNeeds: false, // need icons above residents' heads
     dayFrac: null, // 0..1 through the term (dawn -> noon -> dusk)
@@ -25,6 +26,7 @@
   });
 
   let canvas, ctx, W = 0, H = 0, DPR = 1;
+  const LM_SPRITE_Z = 0.012; // landmarks are drawn as sprites from this zoom in (dots further out)
   let stars = null;
   const clouds = [];
 
@@ -185,15 +187,25 @@
         ctx.fillStyle = "rgba(8,12,30,0.38)";
         for (const d of sim.districts) if (d !== R.focus) ctx.fill(d.path, "evenodd");
       }
-      // thick district borders: dark casing + bright line, constant width on screen
+      // thick district borders: dark casing + each district's own colour, drawn on its side of the line
       ctx.lineJoin = "round";
       ctx.strokeStyle = "rgba(6,10,28,0.9)";
+      ctx.lineWidth = 9 / z;
+      for (const d of sim.districts) ctx.stroke(d.path);
       ctx.lineWidth = 7 / z;
-      for (const d of sim.districts) ctx.stroke(d.path);
-      ctx.strokeStyle = "rgba(255,255,255,0.96)";
-      ctx.lineWidth = 2.8 / z;
-      for (const d of sim.districts) ctx.stroke(d.path);
+      for (const d of sim.districts) {
+        ctx.save();
+        ctx.clip(d.path, "evenodd");
+        ctx.strokeStyle = d.color;
+        ctx.stroke(d.path);
+        ctx.restore();
+      }
       ctx.globalAlpha = 1;
+    }
+    // districts hit by a disaster pulse in the disaster's colour
+    for (const dis of CP.events.active) {
+      ctx.fillStyle = CP.hexA(dis.t.tint, 0.14 + 0.1 * Math.sin(t * 4));
+      ctx.fill(dis.d.path, "evenodd");
     }
     // protests: red hatch over the district
     for (const [id, left] of sim.protests) {
@@ -252,6 +264,9 @@
       drawObjects(t, map);
       drawDaylight(pcx, pcy, pr);
       drawLabels(map * (1 - near * 0.7), t);
+      if (map > 0.5) drawDisasters(t);
+      else for (const dis of CP.events.active) dis.box = null;
+      drawJokes(t);
     }
 
     const cloudA = CP.clamp(1 - (z - R.minZoom() * 1.2) / (R.minZoom() * 1.3), 0, 1) * 0.9;
@@ -409,12 +424,13 @@
             items.push(it);
           }
     }
-    if (z >= 0.03) for (const l of CP.LANDMARKS) items.push({ type: "lm", l, x: l.pos[0], y: l.pos[1] + 60 });
-    for (const p of sim.buildings) items.push({ type: "bld", p, x: p.x, y: p.y });
+    if (z >= LM_SPRITE_Z) for (const l of CP.LANDMARKS) items.push({ type: "lm", l, x: l.pos[0], y: l.pos[1] + 60 });
+    for (const p of sim.buildings) if (!p.prebuilt) items.push({ type: "bld", p, x: p.x, y: p.y }); // prebuilt = drawn as its landmark
     // existing homes on lots outside the zoomed-in district
     if (z >= 0.045) for (const lot of sim.lots) if (lot.house && lot.d !== R.focus) items.push({ type: "lothouse", lot, x: lot.x, y: lot.y });
     for (const p of R.props) items.push({ type: "prop", p, x: p.x, y: p.y, sortY: p.kind === "path" ? -1e9 : p.y }); // paths are ground: drawn under everything
-    for (const r of CP.residents.list) if (!r.hidden) items.push({ type: "res", r, x: r.x, y: r.y });
+    // civilians with a "!" (and whoever you are talking to) stand in front of the scenery so they are never hidden
+    for (const r of CP.residents.list) if (!r.hidden) items.push({ type: "res", r, x: r.x, y: r.y, sortY: r.offer || r === CP.game.talkTo ? 1e12 + r.y : undefined });
     items.sort((a, b) => (a.sortY !== undefined ? a.sortY : a.y) - (b.sortY !== undefined ? b.sortY : b.y));
 
     ctx.globalAlpha = alpha;
@@ -437,6 +453,12 @@
         S.ambient(ctx, it, sx, sy, kA);
       } else if (it.type === "lm") {
         const [lx, ly] = R.toScreen(it.l.pos[0], it.l.pos[1]);
+        if (it.l.building) {
+          // the lot it stands on, in the building's colour
+          const p = S.pen(ctx, lx, ly, kB * 1.3);
+          p.flat(-62, -62, 0, 124, 124, CP.hexA(CP.BUILDINGS[it.l.service].color, 0.35), true);
+          ctx.strokeStyle = CP.BUILDINGS[it.l.service].color; ctx.lineWidth = 2.5; ctx.stroke();
+        }
         S.landmark(ctx, it.l, lx, ly, z * world.LM_SCALE, t);
       } else if (it.type === "bld") {
         const grow = CP.smooth(CP.clamp((now - it.p.built) / 600, 0, 1));
@@ -453,9 +475,23 @@
         else S.prop(ctx, it.p.kind, sx, sy, z * 3);
       } else if (it.type === "res") {
         const r = it.r;
-        S.resident(ctx, sx, sy, uR, r.look, { phase: r.phase, moving: r.moving, dir: r.dir, talk: r.talking ? t : 0 });
-        const icon = r.complaint ? "😠" : r.icon;
-        if (R.showNeeds && icon) needIcon(sx, sy - 100 * uR * (r.look.extra.small ? 0.82 : 1) - 18 - Math.sin(t * 3 + r.d.id) * 2.5, icon, r);
+        const a = { phase: r.phase, moving: r.moving, dir: r.dir, talk: r.talking ? t : 0, wave: r.wave };
+        const headY = sy - 100 * uR * (r.look.extra.small ? 0.82 : 1);
+        if (r.offer) {
+          // glowing outline: the figure drawn with a strong gold glow, then crisp on top
+          ctx.save();
+          ctx.shadowColor = "#ffd43b";
+          ctx.shadowBlur = 16;
+          S.resident(ctx, sx, sy, uR, r.look, a);
+          S.resident(ctx, sx, sy, uR, r.look, a);
+          ctx.restore();
+          S.resident(ctx, sx, sy, uR, r.look, a);
+          bang(sx, headY - 26 - Math.abs(Math.sin(t * 3.2 + r.d.id)) * 8, t);
+        } else {
+          S.resident(ctx, sx, sy, uR, r.look, a);
+          const icon = r.complaint ? "😠" : r.icon;
+          if (R.showNeeds && icon) needIcon(sx, headY - 18 - Math.sin(t * 3 + r.d.id) * 2.5, icon, r);
+        }
       }
     }
     // unhappy faces over harmed homes
@@ -465,21 +501,98 @@
     for (const [x, y] of sad) ctx.fillText("😟", x, y + Math.sin(t * 3 + x) * 2);
     // landmark dots from far away, names up close
     ctx.font = "600 11px Inter, system-ui, sans-serif";
-    if (z < 0.03) {
+    if (z < LM_SPRITE_Z) {
       for (const l of CP.LANDMARKS) {
         const [sx, sy] = R.toScreen(l.pos[0], l.pos[1]);
         ctx.fillStyle = "#ffd166";
-        ctx.beginPath(); ctx.arc(sx, sy, 3, 0, 7); ctx.fill();
-        ctx.strokeStyle = "#0b1020"; ctx.lineWidth = 1.2; ctx.stroke();
+        ctx.beginPath(); ctx.arc(sx, sy, 8, 0, 7); ctx.fill();
+        ctx.strokeStyle = "#0b1020"; ctx.lineWidth = 2; ctx.stroke();
       }
-    } else if (z > 0.09) {
+    } else if (z > 0.05) {
+      ctx.textAlign = "center";
       for (const l of CP.LANDMARKS) {
         const [sx, sy] = R.toScreen(l.pos[0], l.pos[1]);
         if (sx < -100 || sx > W + 100 || sy < -100 || sy > H + 100) continue;
-        label(l.name, sx, sy + 22);
+        label((l.building ? CP.BUILDINGS[l.service].icon + " " : "") + l.name, sx, sy + 26);
       }
     }
     ctx.globalAlpha = 1;
+  }
+
+  // the "!" over a civilian who has a mission for you
+  function bang(sx, sy, t) {
+    const r = 15;
+    ctx.fillStyle = `rgba(255,212,59,${0.25 + 0.15 * Math.sin(t * 5)})`;
+    ctx.beginPath(); ctx.arc(sx, sy, r + 7, 0, 7); ctx.fill();
+    ctx.fillStyle = "#ffd43b";
+    ctx.strokeStyle = "#1a2038";
+    ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(sx, sy, r, 0, 7); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#1a2038";
+    ctx.font = "900 21px Inter, system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("!", sx, sy + 1);
+  }
+
+  // short joke bubbles (several can be up at once; the hovered resident uses the DOM bubble instead)
+  function drawJokes(t) {
+    ctx.font = "600 12.5px Inter, system-ui, sans-serif";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    for (const r of CP.residents.list) {
+      if (!r.joke || r.hidden || r.talking) continue;
+      const [hx, hy] = CP.residents.headPos(r);
+      if (hx < -200 || hx > W + 200 || hy < -100 || hy > H + 100) continue;
+      const k = r.joke.t / r.joke.life, a = Math.min(1, (1 - k) * 6, k * 4);
+      const lines = wrap(r.joke.text, 200);
+      const w = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 20, h = lines.length * 16 + 14;
+      const x = CP.clamp(hx - w / 2, 6, W - w - 6), y = hy - h - 22 - (r.offer ? 34 : 0) + (1 - Math.min(1, (1 - k) * 6)) * 8;
+      ctx.globalAlpha = a;
+      ctx.fillStyle = "#fffbea";
+      ctx.strokeStyle = "#1a2038";
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(hx - 7, y + h - 1); ctx.lineTo(hx, y + h + 10); ctx.lineTo(hx + 7, y + h - 1); ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      ctx.fillRect(hx - 6, y + h - 3, 12, 3);
+      ctx.fillStyle = "#1a2038";
+      lines.forEach((l, i) => ctx.fillText(l, x + 10, y + 8 + i * 16));
+    }
+    ctx.globalAlpha = 1;
+  }
+  function wrap(text, maxW) {
+    const out = [];
+    let line = "";
+    for (const w of text.split(" ")) {
+      const next = line ? line + " " + w : w;
+      if (ctx.measureText(next).width > maxW && line) { out.push(line); line = w; } else line = next;
+    }
+    if (line) out.push(line);
+    return out;
+  }
+
+  // active disasters: huge animated art over everything else on the ground
+  function drawDisasters(t) {
+    const s = S.disasterScale(R.cam.z);
+    for (const dis of CP.events.active) {
+      const [sx, sy] = R.toScreen(dis.x, dis.y);
+      if (sx < -600 || sx > W + 600 || sy < -700 || sy > H + 600) { dis.box = null; continue; }
+      dis.box = S.disaster(ctx, dis, sx, sy, s, t);
+      // repair tag
+      const txt = `${dis.t.icon} ${dis.t.name} · click to repair ${CP.money(dis.cost)}`;
+      ctx.font = "800 13px Inter, system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      const w = ctx.measureText(txt).width + 22, y = dis.box[3] + 16;
+      ctx.fillStyle = R.hoverDisaster === dis ? "#ff1f3d" : "rgba(170,10,30,0.92)";
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.roundRect(sx - w / 2, y - 13, w, 26, 13); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "#fff";
+      ctx.fillText(txt, sx, y + 0.5);
+      dis.box[3] = y + 14;
+    }
   }
 
   // small bubble above a resident's head showing which metric they need (or a heart / angry face)
@@ -498,10 +611,11 @@
     ctx.fillText(icon, sx, sy + 0.5);
   }
 
-  function label(text, sx, sy, dot, sym) {
+  function label(text, sx, sy, dot, sym, color) {
     const w = ctx.measureText(text).width + 14 + (dot ? 18 : 0);
-    ctx.fillStyle = "rgba(8,12,30,0.82)";
+    ctx.fillStyle = "rgba(8,12,30,0.86)";
     ctx.beginPath(); ctx.roundRect(sx - w / 2, sy - 11, w, 22, 11); ctx.fill();
+    if (color) { ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke(); }
     if (dot) {
       ctx.fillStyle = dot;
       ctx.beginPath(); ctx.arc(sx - w / 2 + 12, sy, 7, 0, 7); ctx.fill();
@@ -512,7 +626,7 @@
         ctx.font = "700 12px Inter, system-ui, sans-serif";
       }
     }
-    ctx.fillStyle = "#e8f1ff";
+    ctx.fillStyle = color || "#e8f1ff";
     ctx.textBaseline = "middle";
     ctx.fillText(text, sx + (dot ? 9 : 0), sy);
   }
@@ -528,7 +642,7 @@
       if (sx < -80 || sx > W + 80 || sy < -40 || sy > H + 40) continue;
       if (d === R.focus) continue; // its name is on the profile card
       const ov = R.overlayMetric !== null ? CP.bandOf(d.score[R.overlayMetric]) : null;
-      label(d.name, sx, sy + 16, ov ? ov.color : null, ov ? ov.sym : null);
+      label(d.name, sx, sy + 16, ov ? ov.color : null, ov ? ov.sym : null, d.color);
     }
     // mission pins
     for (const p of R.pins) {

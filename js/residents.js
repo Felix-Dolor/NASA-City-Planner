@@ -1,5 +1,7 @@
-// One representative resident per district. They wander inside their district's borders and
+// One representative resident (civilian) per district. They wander inside their district's borders and
 // voice its weakest metric; when that need is met they say thanks, then move on to the next need.
+// A civilian holding a mission offer (r.offer, set by challenges.js) stops, waves and shows a "!".
+// Now and then a civilian tells a short joke in a speech bubble (never more often than once a minute each).
 (function () {
   const CP = window.CP;
   const sim = CP.sim;
@@ -7,7 +9,9 @@
   const THANKS_SECONDS = 14;
   const rand = CP.rng(2024);
 
-  const res = (CP.residents = { list: [] });
+  const res = (CP.residents = { list: [], clock: 0, jokeT: 12 });
+  const CV = CP.CIVILIANS;
+  let jokeDeck = [];
 
   const inside = (d, x, y) =>
     sim.districtAt(x, y) === d && sim.districtAt(x - 350, y) === d && sim.districtAt(x + 350, y) === d &&
@@ -62,7 +66,7 @@
 
   res.init = function () {
     res.list = sim.districts.map((d) => {
-      const r = { d, name: d.def.resident.name, look: d.def.resident.look, x: d.label[0], y: d.label[1], phase: rand() * 6, moving: false, dir: 1, pause: rand() * 3 };
+      const r = { d, name: d.def.resident.name, look: d.def.resident.look, x: d.label[0], y: d.label[1], phase: rand() * 6, moving: false, dir: 1, pause: rand() * 3, lastJoke: -1e9, joke: null, offer: null };
       r.target2 = [r.x, r.y];
       d.resident = r;
       assignNeed(r);
@@ -96,12 +100,17 @@
   };
 
   res.update = function (dt) {
+    res.clock += dt;
     for (const r of res.list) {
       if (r.complaint && (r.complaint.t -= dt) <= 0) r.complaint = null;
+      if (r.joke && (r.joke.t -= dt) <= 0) r.joke = null;
       if (r.state === "thanks") {
         r.thanksT -= dt;
         if (r.thanksT <= 0) assignNeed(r);
       }
+      // waiting with a mission: stand still facing the viewer and wave
+      if (r.offer) { r.moving = false; r.wave = (r.wave || 0) + dt; continue; }
+      r.wave = undefined;
       if (r.scripted || r.talking) { r.moving = false; continue; }
       if (r.pause > 0) { r.pause -= dt; r.moving = false; continue; }
       const dx = r.target2[0] - r.x, dy = r.target2[1] - r.y;
@@ -117,6 +126,24 @@
       r.moving = true;
       r.phase += dt * 8;
     }
+  };
+
+  // every so often one civilian on screen tells a joke; each waits at least CV.jokeGap seconds between jokes
+  res.tickJokes = function (dt) {
+    res.jokeT -= dt;
+    if (res.jokeT > 0) return;
+    res.jokeT = CV.jokeEvery[0] + rand() * (CV.jokeEvery[1] - CV.jokeEvery[0]);
+    const [W, H] = CP.render.size();
+    const ready = res.list.filter((r) => {
+      if (r.hidden || r.talking || r.joke || r.complaint || res.clock - r.lastJoke < CV.jokeGap) return false;
+      const [sx, sy] = CP.render.toScreen(r.x, r.y);
+      return sx > 80 && sx < W - 80 && sy > 160 && sy < H - 40;
+    });
+    if (!ready.length) return;
+    const r = ready[Math.floor(rand() * ready.length)];
+    if (!jokeDeck.length) jokeDeck = CP.JOKES.slice().sort(() => rand() - 0.5);
+    r.joke = { text: jokeDeck.pop(), t: CV.jokeSeconds, life: CV.jokeSeconds };
+    r.lastJoke = res.clock;
   };
 
   // screen position of the top of a resident's head
@@ -138,7 +165,8 @@
     for (const r of res.list) {
       if (r.hidden) continue;
       const [sx, sy] = CP.render.toScreen(r.x, r.y);
-      if (Math.abs(px - sx) > 26 * u + 10 || py > sy + 10 || py < sy - 110 * u - 40) continue;
+      const pad = r.offer ? 16 : 10; // civilians with a "!" are easier to hit
+      if (Math.abs(px - sx) > 26 * u + pad || py > sy + pad || py < sy - 110 * u - 40 - pad * 2) continue;
       const dd = Math.abs(px - sx);
       if (dd < bd) { bd = dd; best = r; }
     }

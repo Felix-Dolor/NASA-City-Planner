@@ -18,16 +18,23 @@
   CP.PEOPLE_PER_HOME = 2.6;
   CP.FINAL = { perEquityPoint: 100, perBudgetM: 2 }; // final score = equity * 100 + leftover $M * 2
   CP.MISSIONS = {
-    total: 10, // contracts available over the whole term
-    active: 3, // shown at once
+    active: 3, // accepted missions you can hold at once
+    offers: 2, // civilians on the map with a "!" waiting to give you a mission
+    offerDelay: 6, // seconds before a new civilian offer appears after one is taken or declined
     grantBase: 12, // $M
     grantPerPoint: 0.7, // + $M per metric point the contract asks for
     districtGrantPerPoint: 0.5, // same, for "raise the whole district" contracts (points summed over 6 metrics)
-    timedSeconds: 100, // time limit on bonus contracts
+    timedSeconds: 100, // time limit on bonus contracts (starts when you accept)
     timedBonus: 1.6, // grant multiplier on bonus contracts
+    planBonus: 2, // planning missions pay this many times a standard mission
+    buildBonus: 1.4, // build missions pay this many times the building's cost
     unlockEvery: 2, // locked lots open after every N completed contracts
   };
-  CP.EVENTS = { count: 3, from: 0.2, to: 0.85 }; // random events per term, spread between 20% and 85% of the term
+  CP.EVENTS = { count: 3, from: 0.2, to: 0.85 }; // disasters per term, spread between 20% and 85% of the term
+  // A disaster stays until the player repairs it. Meanwhile its district pays no revenue and its
+  // residents' happiness (Belonging & Safety) slowly drops; happiness lost while waiting does not come back.
+  CP.DISASTER = { moodMetric: 3, moodPerSec: 0.12, moodMax: 12, tornadoSpeed: 95 };
+  CP.CIVILIANS = { jokeGap: 60, jokeEvery: [9, 16], jokeSeconds: 6.5 }; // per-civilian gap, citywide pacing, bubble life
 
   // ---------- equity bands ----------
   // Every score is 0-100 (higher = more equitable). Each band also has a symbol so it never relies on colour alone.
@@ -204,6 +211,27 @@
       area: { r: 1800, gain: E(0, 0, 0, -10, 0, 0), what: "odour" },
       relates: ["flood_susceptibility", "diabetes_agestd_perc"], risk: "Nobody wants to live next to it: lower Belonging nearby" },
   };
+  // one short line per building for the build bar
+  const SHORT = {
+    clinic: "Gives nearby families a local doctor.",
+    hospital: "Keeps nearby residents healthy.",
+    grocery: "Puts fresh food within walking distance.",
+    jobs: "Brings good jobs close to home.",
+    community: "Gives neighbours a place to meet.",
+    school: "Helps kids learn and finish school.",
+    park: "Adds trees, shade and clean air.",
+    childcare: "Lets parents get back to work.",
+    library: "Free books, classes and internet.",
+    transit: "Fast trips across the city by train.",
+    factory: "Lots of jobs, but pollutes nearby homes.",
+    datacentre: "Big tax money, few jobs, heavy power use.",
+    wastewater: "Cleans water and cuts flood risk.",
+  };
+  for (const k in SHORT) CP.BUILDINGS[k].short = SHORT[k];
+  // real infrastructure that is already standing when the term starts (not in the build bar)
+  CP.BUILDINGS.reservoir = { name: "Reservoir & Water Plant", icon: "💧", cost: 0, upkeep: 0, color: "#22b8cf", zones: "O", gain: E(0, 0, 10, 0, 0, 12),
+    short: "Clean drinking water for the city.", relates: ["flood_susceptibility"] };
+
   // in the Build list, most useful first
   CP.BUILD_ORDER = ["clinic", "grocery", "community", "park", "childcare", "library", "school", "jobs", "transit", "hospital", "factory", "wastewater", "datacentre"];
   CP.HOUSE_ICON = "🏠";
@@ -353,26 +381,78 @@
     protest: ["We're not moving until City Hall listens!", "Not next to our homes!"],
   };
 
-  // ---------- random events ----------
-  // Each drops one metric in one district by a full band. Placing a matching building there recovers it.
-  // weight: real indicator used to pick where it strikes (higher value = more likely).
+  // ---------- disasters ----------
+  // Each drops one metric in one district by a full band and stays on the map until the player clicks it
+  // and pays the repair cost. weight: real indicator used to pick where it strikes (higher = more likely).
+  // tint: colour the district pulses while it is hit. The tornado wanders from district to district.
   CP.EVENT_TYPES = {
-    flood: { name: "Flood", icon: "🌊", metric: 5, fix: ["park", "wastewater"], weight: "flood_susceptibility", trait: "flood",
+    flood: { name: "Flood", icon: "🌊", metric: 5, cost: 7, tint: "#2f8fff", weight: "flood_susceptibility", trait: "flood",
       text: "{river} has burst its banks in {d}. Homes are flooded." },
-    fire: { name: "House fire", icon: "🔥", metric: 3, fix: ["community", "clinic"],
-      text: "A house fire in {d} has left families without a home." },
-    storm: { name: "Storm", icon: "⛈️", metric: 1, fix: ["community", "grocery"],
-      text: "A summer storm knocked out power and roads in {d}." },
-    tornado: { name: "Tornado", icon: "🌪️", metric: 4, fix: ["community", "school"],
-      text: "A tornado touched down in {d}. Families need support." },
-    rain: { name: "Heavy rain", icon: "🌧️", metric: 5, fix: ["wastewater", "park"], weight: "flood_susceptibility",
-      text: "Heavy rain flooded basements across {d}." },
-    lightning: { name: "Lightning", icon: "⚡", metric: 0, fix: ["jobs", "factory"],
+    fire: { name: "House fire", icon: "🔥", metric: 3, cost: 5, tint: "#ff6a00",
+      text: "A house is on fire in {d}. Families have lost their home." },
+    storm: { name: "Storm", icon: "⛈️", metric: 1, cost: 5, tint: "#7c5cff",
+      text: "A violent storm is battering {d}. Power and roads are down." },
+    tornado: { name: "Tornado", icon: "🌪️", metric: 4, cost: 8, tint: "#9aa4b5", moves: true,
+      text: "A tornado is tearing across {d}!" },
+    rain: { name: "Heavy rain", icon: "🌧️", metric: 5, cost: 5, tint: "#3fa7ff", weight: "flood_susceptibility",
+      text: "Heavy rain is flooding basements across {d}." },
+    lightning: { name: "Lightning", icon: "⚡", metric: 0, cost: 6, tint: "#ffe14d",
       text: "Lightning knocked out power to businesses in {d}. Shops are closed." },
-    earthquake: { name: "Earthquake", icon: "🌍", metric: 2, fix: ["clinic", "hospital"],
-      text: "A rare tremor shook {d}. People were injured." },
-    collapse: { name: "Building collapse", icon: "🏚️", metric: 4, fix: ["school", "community"],
-      text: "A badly built apartment block collapsed in {d}." },
+    earthquake: { name: "Earthquake", icon: "🌍", metric: 2, cost: 7, tint: "#c98a4b",
+      text: "A rare earthquake has cracked the streets of {d}. People are hurt." },
+    collapse: { name: "Building collapse", icon: "🏚️", metric: 4, cost: 6, tint: "#b0a090",
+      text: "A badly built apartment block has collapsed in {d}." },
+  };
+
+  // ---------- civilians ----------
+  // vague complaints used by planning missions: the player has to open Plan to find what is wrong
+  CP.PLAN_LINES = [
+    ["Nobody around here can find decent work.", "Everyone on my street is struggling to make rent."],
+    ["Getting anywhere from here takes forever.", "We can never get to the things we need."],
+    ["People around here keep getting sick.", "Folks here just don't feel well, and nobody knows why."],
+    ["Our neighbourhood feels unsafe.", "Nobody here knows each other any more."],
+    ["Our kids are falling behind.", "Families here are stretched to breaking point."],
+    ["It's an oven here every summer.", "This place is all concrete and no green."],
+  ];
+  // short, friendly jokes civilians say now and then
+  CP.JOKES = [
+    "Calgary has two seasons: winter and road construction.",
+    "I wore shorts yesterday. Today I'm wearing three jackets.",
+    "My GPS just says 'good luck' when I get on Deerfoot.",
+    "I named my cat Deerfoot. He's always jammed up.",
+    "The pothole on my street is so big it has its own postal code.",
+    "I'm not saying it's windy, but my hat just moved to Airdrie.",
+    "Chinook today! Time to wash the car before it snows again.",
+    "Parallel parking in a snowbank is my cardio.",
+    "I put my winter tires on in July. Just to be safe.",
+    "Stampede week is the only time my boss wears more denim than me.",
+    "My neighbour shovels his snow onto my driveway. He calls it sharing.",
+    "Plus fifteen in February? Break out the t-shirts!",
+    "I tried to catch some fog this morning. Mist.",
+    "My kid thinks the Calgary Tower is a giant lamp. I didn't correct her.",
+    "Smile, everyone! The Director is watching from space.",
+    "Why did the cowboy get a dachshund? He wanted a long little doggie.",
+    "I told a joke about the CTrain. It went right over the Bow.",
+    "I'd tell you a construction joke, but I'm still working on it.",
+    "My dog barks at the mountains. He thinks they're big clouds.",
+    "Hail in June, sun in January. Calgary keeps us guessing.",
+    "My cactus moved here for the dry heat. Then winter happened.",
+    "Every Calgarian owns one cowboy hat and zero horses.",
+    "I asked for a chinook. Got a wind warning instead.",
+    "If you don't like the weather, wait five minutes. It'll be worse.",
+  ];
+
+  // what civilians say when a mission they gave you ends
+  CP.CIV_LINES = {
+    done: [
+      'You did it, Director! "{title}" is done. City Hall has sent you a {grant} grant.',
+      'I can already feel the difference. Thank you for "{title}". Your {grant} grant is on its way.',
+      'The whole street is talking about it! "{title}" is done, and {grant} is yours.',
+    ],
+    failed: [
+      'Time ran out on "{title}". We\'ll manage somehow, Director, but it stings.',
+      'You didn\'t make it in time for "{title}". Maybe next time.',
+    ],
   };
 
   // ---------- story ----------
@@ -389,7 +469,8 @@
     briefing: [
       "Director, this is Deputy City Manager Maya Okonkwo at City Hall. The planning satellite CEI-SAT 1 is now under your command.",
       "Your job: make Calgary the most equitable city on the planet. You have a 10-minute term and $30M. Every building also costs upkeep each minute.",
-      "Start with MISSIONS and press Go. PLAN shows where life is least fair, using real 2024 Calgary Equity Index data. Then BUILD on a lot in that district. Good luck, Director.",
+      "Start with MISSIONS and press Go. PLAN shows where life is least fair, using real 2024 Calgary Equity Index data. Then BUILD on a lot in that district.",
+      "Residents with a ❗ over their heads have jobs for you: click them to hear them out. If disaster strikes, click it on the map to repair it. Good luck, Director.",
     ],
     missionDone: [
       'Contract complete: "{title}". A grant of {grant} has been wired to your budget.',
@@ -397,7 +478,6 @@
       'City Hall is impressed. "{title}" is complete, so I have released a {grant} grant.',
     ],
     lotsUnlocked: "Good news: council has approved more land. New lots are open in several districts.",
-    allMissionsDone: "That was the last contract I had for you, Director. Keep building until your term ends.",
     // closing line of the final report, by overall band (Terrible .. Perfect)
     report: [
       "Director, your term is over. I'll be blunt: Calgary is still a deeply unfair city. The residents deserved better.",

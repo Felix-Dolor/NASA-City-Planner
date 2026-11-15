@@ -31,7 +31,7 @@
         <span class="val"><span id="eq-num">0</span><small>/100</small> <span id="equity"></span></span>
         <div class="eqbar"><span id="eq-start"></span><span id="eq-fill"></span><span id="eq-gain"></span></div>
       </div>
-      <div class="stat" title="Running costs of everything you have built"><span class="lbl">Upkeep</span><span id="upkeep" class="val">$0/min</span></div>
+      <div class="stat" id="stat-upkeep-wrap" title="Running costs of everything you have built"><span class="lbl">Upkeep</span><span id="upkeep" class="val">$0/min</span></div>
     </div>
     <nav id="tabs" class="panel">
       <button class="tab" data-tab="missions">🎯 Missions <span id="mission-count" class="pill"></span></button>
@@ -50,7 +50,7 @@
   <aside id="panel" class="panel hidden">
     <section id="panel-missions" class="tabpanel">
       <h3>Missions</h3>
-      <p class="muted">Contracts from the Deputy City Manager. Press <b>Go</b> to jump to the district. Finish one to earn its grant.</p>
+      <p class="muted">Residents with a <b class="bang">!</b> have jobs for you. Press <b>Go</b> to jump to a mission's district; finish it to earn its grant. Don't like one? <b>Discard</b> it for a new one.</p>
       <div id="mission-list"></div>
     </section>
     <section id="panel-plan" class="tabpanel">
@@ -61,12 +61,16 @@
       <div id="indicators"></div>
       <div id="band-legend"></div>
     </section>
-    <section id="panel-build" class="tabpanel">
-      <h3>Build</h3>
-      <p class="muted" id="build-help">Pick a building, then click a district to zoom in and place it on a lot.</p>
-      <div id="build-list"></div>
-    </section>
   </aside>
+
+  <!-- Build: a horizontal bar along the bottom of the screen -->
+  <div id="buildbar" class="panel hidden">
+    <div id="build-help" class="muted"></div>
+    <div id="build-list"></div>
+  </div>
+
+  <!-- repair card for a clicked disaster -->
+  <div id="repair" class="panel hidden"></div>
 
   <!-- district profile (shown while zoomed into a district) -->
   <aside id="profile" class="panel hidden"></aside>
@@ -103,12 +107,12 @@
       <i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i>
       <div class="dcm-portrait"><canvas id="dcm-face" width="224" height="264"></canvas></div>
       <div class="dcm-body">
-        <div class="dcm-kicker">◈ Incoming transmission · City Hall</div>
+        <div class="dcm-kicker" id="dcm-kicker">◈ Incoming transmission · City Hall</div>
         <div class="dcm-name" id="dcm-name"></div>
         <div class="dcm-title" id="dcm-title"></div>
         <div class="dcm-text" id="dcm-text"></div>
         <div class="dcm-extra" id="dcm-extra"></div>
-        <div class="dcm-actions"><span id="dcm-page"></span><button id="dcm-next">Continue ▸</button></div>
+        <div class="dcm-actions"><span id="dcm-page"></span><span id="dcm-choices"></span><button id="dcm-next">Continue ▸</button></div>
       </div>
     </div>
   </div>
@@ -139,6 +143,7 @@
   <script src="js/events.js"></script>
   <script src="js/world.js"></script>
   <script src="js/sprites.js"></script>
+  <script src="js/disaster-sprites.js"></script>
   <script src="js/residents.js"></script>
   <script src="js/render.js"></script>
   <script src="js/audio.js"></script>

@@ -405,6 +405,23 @@
     boxC(ctx, sx, sy, z, 30, 18, 8, { wall: "#a47c52", roof: "#6d4c2f" });
   };
 
+  // Glenmore dam and water treatment plant: a curved concrete dam, an intake tower and settling tanks
+  LM.reservoir = (ctx, sx, sy, z, t) => {
+    const p = Pen(ctx, sx, sy, z * 0.9);
+    p.flat(-70, -60, 0, 140, 120, "#b8c2cc");
+    p.shadow(-60, -50, 120, 100, 20);
+    p.box(-64, -58, 0, 128, 12, 18, "#d5d0c4", "#e6e1d6");
+    for (const [x, y] of [[-30, 0], [10, 0], [-30, 36]]) {
+      p.cyl(x, y, 0, 15, 10, "#ced4da", "#22b8cf");
+      p.disc(x, y, 10.2, 11, "#66d9e8", true);
+      const a = (t || 0) * 0.8 + x;
+      p.seg([x, y, 10.5], [x + Math.cos(a) * 11, y + Math.sin(a) * 11, 10.5], "#495057", Math.max(1, p.k * 1.4));
+    }
+    p.box(24, 18, 0, 36, 34, 22, "#eef3f7", "#1098ad", { win: true });
+    p.cyl(44, -30, 0, 9, 38, "#d5d0c4", "#a5a092");
+    p.box(38, -36, 38, 12, 12, 8, "#1098ad");
+  };
+
   S.landmark = function (ctx, l, sx, sy, z, t) {
     (LM[l.kind] || LM.tower)(ctx, sx, sy, z, t, l);
   };
@@ -746,13 +763,22 @@
     limb(sx + 6.5 * u, sy - 36 * u - bob, sx + 6.5 * u - sw * 7 * u, sy - 4 * u, 8.5 * u, L.bottom);
     rr(sx - 12 * u + sw * 7 * u, sy - 5 * u, 11 * u, 5 * u, 2 * u, "#2b2b33", false);
     rr(sx + 1 * u - sw * 7 * u, sy - 5 * u, 11 * u, 5 * u, 2 * u, "#2b2b33", false);
-    // arms + hands
-    limb(sx - 15 * u, sy - 64 * u - bob, sx - 20 * u - sw * 5 * u, sy - 42 * u - bob, 7 * u, L.top);
-    limb(sx + 15 * u, sy - 64 * u - bob, sx + 20 * u + sw * 5 * u, sy - 42 * u - bob, 7 * u, L.top);
-    circ(sx - 20 * u - sw * 5 * u, sy - 40 * u - bob, 4 * u, X.mitts || L.skin, false);
-    circ(sx + 20 * u + sw * 5 * u, sy - 40 * u - bob, 4 * u, X.mitts || L.skin, false);
-    if (X.book) rr(sx + 16 * u + sw * 5 * u, sy - 50 * u - bob, 10 * u, 13 * u, 1.5 * u, X.book);
-    if (X.bag) rr(sx - 27 * u - sw * 5 * u, sy - 40 * u - bob, 12 * u, 11 * u, 2 * u, X.bag);
+    // arms + hands (a.wave: the arm on the facing side is raised and waving back and forth)
+    const waveSide = a.wave !== undefined ? dir : 0;
+    for (const side of [-1, 1]) {
+      const shX = sx + side * 15 * u, shY = sy - 64 * u - bob;
+      if (side === waveSide) {
+        const ang = -Math.PI / 2 + side * (0.45 + 0.4 * Math.sin(a.wave * 9));
+        const hx2 = shX + Math.cos(ang) * 30 * u, hy2 = shY + Math.sin(ang) * 30 * u;
+        limb(shX, shY, hx2, hy2, 7 * u, L.top);
+        circ(hx2, hy2 - 1 * u, 4.6 * u, X.mitts || L.skin, false);
+        continue;
+      }
+      limb(shX, shY, sx + side * (20 * u + sw * 5 * u), sy - 42 * u - bob, 7 * u, L.top);
+      circ(sx + side * (20 * u + sw * 5 * u), sy - 40 * u - bob, 4 * u, X.mitts || L.skin, false);
+    }
+    if (X.book && waveSide !== 1) rr(sx + 16 * u + sw * 5 * u, sy - 50 * u - bob, 10 * u, 13 * u, 1.5 * u, X.book);
+    if (X.bag && waveSide !== -1) rr(sx - 27 * u - sw * 5 * u, sy - 40 * u - bob, 12 * u, 11 * u, 2 * u, X.bag);
     // torso
     const tx = sx - 15 * u, ty = sy - 70 * u - bob, tw = 30 * u, th = 38 * u;
     rr(tx, ty, tw, th, 7 * u, L.top);

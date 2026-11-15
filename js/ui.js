@@ -1,6 +1,7 @@
-// DOM interface: top bar, the three tabs (Missions | Plan | Build), district profile card, placement preview
-// card, tooltips, speech bubbles, banners, undo, coach marks, settings, the Deputy City Manager's panel
-// and the final report (your Calgary vs the real 2024 Calgary Equity Index).
+// DOM interface: top bar, the three tabs (Missions | Plan | Build), the build bar along the bottom, district
+// profile card, placement preview card, tooltips, speech bubbles, banners, undo, coach marks, settings, the
+// repair card for disasters, the portrait dialogue panel (the Deputy City Manager and civilians, with
+// Accept / Decline for mission offers) and the final report (your Calgary vs the real 2024 Calgary Equity Index).
 (function () {
   const CP = window.CP;
   const sim = CP.sim, R = CP.render, S = CP.sprites, missions = CP.missions;
@@ -14,30 +15,40 @@
 
   // ---------- setup ----------
   ui.init = function () {
-    // Build list (rows are built once and re-sorted on every update)
+    // Build bar: one compact card per building with a one-line description (details on hover).
+    // Cards are built once and re-sorted on every update.
     $("#build-list").innerHTML = CP.BUILD_ORDER.map((id) => {
       const b = CP.BUILDINGS[id];
       return `<button class="bld" data-type="${id}">
-        <canvas width="104" height="96"></canvas>
-        <span class="bld-main">
-          <span class="bld-name">${b.name} <span class="helps">Helps mission</span></span>
-          <span class="bld-fx">${effectText(b)}</span>
-          ${b.risk ? `<span class="bld-risk">⚠ ${b.risk}</span>` : ""}
-          <span class="bld-zones">${b.zones.split("").map((z) => `<i style="--zc:${CP.ZONES[z].color}">${CP.ZONES[z].icon} ${CP.ZONES[z].name}</i>`).join("")}</span>
-        </span>
-        <span class="bld-cost"><span class="c"></span><small>${upkeepText(b)}</small></span></button>`;
+        <span class="helps">Helps mission</span>
+        <canvas width="96" height="80"></canvas>
+        <span class="bld-name">${b.name}</span>
+        <span class="bld-short">${b.short}</span>
+        <span class="bld-cost"><span class="c"></span></span></button>`;
     }).join("");
     $$("#build-list .bld").forEach((el) => {
       const c = el.querySelector("canvas").getContext("2d");
       c.scale(2, 2);
-      S.building(c, el.dataset.type, 26, 38, 0.24, 0, { plate: false });
+      S.building(c, el.dataset.type, 24, 30, 0.2, 0, { plate: false });
     });
-    $("#build-list").addEventListener("click", (e) => {
+    const bl = $("#build-list");
+    bl.addEventListener("click", (e) => {
       const b = e.target.closest(".bld");
       if (!b) return;
       ui.select(ui.selected === b.dataset.type ? null : b.dataset.type);
       CP.audio.click();
     });
+    bl.addEventListener("mouseover", (e) => {
+      const b = e.target.closest(".bld");
+      if (!b) return;
+      ui.barTip = true;
+      ui.tooltipAbove(buildTip(b.dataset.type), b.getBoundingClientRect());
+    });
+    bl.addEventListener("mouseleave", () => { ui.barTip = false; ui.hideTooltip(); });
+    // a mouse wheel scrolls the bar sideways
+    bl.addEventListener("wheel", (e) => {
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { bl.scrollLeft += e.deltaY; e.preventDefault(); }
+    }, { passive: false });
 
     // Plan
     $("#metric-list").innerHTML = CP.DOMAINS.map((d, i) => `<button class="metric" data-m="${i}"><span>${d.icon} ${d.label}</span><span class="mchip" id="mchip-${i}"></span></button>`).join("");
@@ -47,17 +58,37 @@
     });
     $("#band-legend").innerHTML = CP.BANDS.slice().reverse().map((b) => `<span class="band" style="background:${b.color};color:${b.ink}"><i>${b.sym}</i> ${b.name} <small>${b.min}+</small></span>`).join("");
 
-    // Missions: Go buttons, card clicks, hover highlights
+    // Missions: emergencies, Go buttons, Discard, civilian offers, hover highlights
     const ml = $("#mission-list");
     ml.addEventListener("click", (e) => {
+      const em = e.target.closest(".emergency");
+      if (em) {
+        const dis = CP.events.active.find((x) => String(x.id) === em.dataset.dis);
+        if (dis) CP.game.goDisaster(dis);
+        return;
+      }
+      const of = e.target.closest(".offer");
+      if (of) {
+        const o = missions.offers.find((x) => x.id === of.dataset.id);
+        if (o) CP.game.openOffer(o.giver);
+        return;
+      }
       const el = e.target.closest(".mission");
       if (!el) return;
       const m = missions.active.find((x) => x.id === el.dataset.id);
-      if (m) CP.game.goMission(m);
+      if (!m) return;
+      if (e.target.closest(".discard")) return CP.game.discardMission(m);
+      CP.game.goMission(m);
     });
     ml.addEventListener("mouseover", (e) => {
-      const el = e.target.closest(".mission");
-      const m = el && missions.active.find((x) => x.id === el.dataset.id);
+      const em = e.target.closest(".emergency");
+      if (em) {
+        const dis = CP.events.active.find((x) => String(x.id) === em.dataset.dis);
+        if (dis) R.highlight = dis.d;
+        return;
+      }
+      const el = e.target.closest(".mission, .offer");
+      const m = el && missions.active.concat(missions.offers).find((x) => x.id === el.dataset.id);
       if (m) R.highlight = missions.focus(m);
     });
     ml.addEventListener("mouseleave", () => (R.highlight = ui.mission ? missions.focus(ui.mission) : null));
@@ -84,13 +115,21 @@
     $("#undo").onclick = () => CP.game.undo();
     $("#coach .coach-skip").onclick = () => ui.endTutorial();
     $("#dcm-next").onclick = () => ui.dcmNext();
-    $("#dcm-name").textContent = CP.STORY.dcm.name;
-    $("#dcm-title").textContent = CP.STORY.dcm.title;
+    $("#dcm-choices").addEventListener("click", (e) => {
+      const b = e.target.closest("button");
+      if (b) ui.dcmChoose(+b.dataset.i);
+    });
+    $("#repair").addEventListener("click", (e) => {
+      const b = e.target.closest("button");
+      if (!b) return;
+      if (b.dataset.act === "fix" && repairFor) CP.game.repair(repairFor);
+      else ui.hideRepair();
+    });
     $("#profile").addEventListener("click", (e) => {
       if (e.target.closest("[data-city]")) CP.game.exitDistrict();
       if (e.target.closest("[data-talk]") && R.focus) CP.game.pinResident(R.focus.resident);
     });
-    drawPortrait($("#dcm-face").getContext("2d"));
+    showSpeaker(null);
     ui.setMetric(0);
     ui.setTab("missions");
   };
@@ -113,12 +152,26 @@
   }
   function upkeepText(b) {
     let s = `upkeep ${CP.money(b.upkeep)}/min`;
-    if (b.income) s += `<br>tax +${CP.money(b.income)}/min`;
+    if (b.income) s += ` · tax +${CP.money(b.income)}/min`;
     return s;
+  }
+  // full details of a building, shown when hovering its card in the build bar
+  function buildTip(type) {
+    const b = CP.BUILDINGS[type], cost = sim.baseCost(type, R.focus);
+    return `<div class="tt-h">${b.icon} ${b.name}</div>
+      <div style="margin-bottom:5px">${b.short}</div>
+      <div class="bld-fx">${effectText(b)}</div>
+      ${b.risk ? `<div class="warn" style="margin-top:4px">⚠ ${b.risk}</div>` : ""}
+      <div class="bld-zones" style="margin-top:5px">${b.zones.split("").map((z) => `<i style="--zc:${CP.ZONES[z].color}">${CP.ZONES[z].icon} ${CP.ZONES[z].name}</i>`).join("")}</div>
+      <div class="tt-cost ${sim.canAfford(cost) ? "" : "neg"}">Cost ${CP.money(cost)}${R.focus && R.focus.def.cost !== 1 ? ` in ${CP.esc(R.focus.name)}` : ""} · ${upkeepText(b)}</div>`;
   }
 
   ui.setTab = function (tab) {
     ui.tab = tab;
+    const on = CP.game && CP.game.started && !CP.game.ended;
+    $("#panel").classList.toggle("hidden", !on || tab === "build");
+    $("#buildbar").classList.toggle("hidden", !on || tab !== "build");
+    document.body.classList.toggle("building", !!on && tab === "build");
     $$(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
     $$(".tabpanel").forEach((p) => p.classList.toggle("active", p.id === "panel-" + tab));
     if (tab !== "build") ui.select(null);
@@ -178,9 +231,12 @@
     const net = sim.netPerMin();
     $("#rate").textContent = `${net >= 0 ? "+" : "−"}${CP.money(Math.abs(net))}/min`;
     $("#rate").className = "rate " + (net >= 0 ? "pos" : "neg");
-    $("#budget-hint").innerHTML = `City revenue <b>+${CP.money(CP.INCOME_PER_MIN)}/min</b>` +
-      (sim.income() > CP.INCOME_PER_MIN ? ` · business tax <b>+${CP.money(sim.income() - CP.INCOME_PER_MIN)}/min</b>` : "") +
-      ` · upkeep <b>−${CP.money(sim.upkeep())}/min</b>. Paid every ${CP.PAYOUT_EVERY} s. Grants arrive when missions are done.`;
+    const lost = sim.lostIncome();
+    $("#budget-hint").innerHTML = `City revenue <b>+${CP.money(sim.revenue())}/min</b>` +
+      (sim.tax() > 0 ? ` · business tax <b>+${CP.money(sim.tax())}/min</b>` : "") +
+      ` · upkeep <b>−${CP.money(sim.upkeep())}/min</b>.` +
+      (lost > 0.01 ? ` <span class="neg">Disasters are costing you ${CP.money(lost)}/min in lost revenue.</span>` : "") +
+      ` Paid every ${CP.PAYOUT_EVERY} s. Grants arrive when missions are done.`;
     $("#upkeep").textContent = `${CP.money(sim.upkeep())}/min`;
     const ov = sim.overall();
     $("#equity").innerHTML = CP.chip(ov);
@@ -189,31 +245,40 @@
 
     // Build: helpers of the active mission first, the rest greyed out (but usable)
     const m = ui.activeMission();
-    const helps = (t) => !!m && missions.metrics(m).some((i) => CP.BUILDINGS[t].gain[i] >= 10 || (CP.BUILDINGS[t].area && CP.BUILDINGS[t].area.gain[i] >= 8));
+    const helps = (t) => missions.helps(m, t);
+    const hint = !!m && CP.BUILD_ORDER.some(helps);
     const list = $("#build-list");
     const rows = [...list.children];
     rows.sort((a, b) => helps(b.dataset.type) - helps(a.dataset.type) || CP.BUILD_ORDER.indexOf(a.dataset.type) - CP.BUILD_ORDER.indexOf(b.dataset.type));
     rows.forEach((el) => {
       const t = el.dataset.type, cost = sim.baseCost(t, R.focus);
       el.classList.toggle("helps", helps(t));
-      el.classList.toggle("dim", !!m && !helps(t));
+      el.classList.toggle("dim", hint && !helps(t));
       el.classList.toggle("poor", !sim.canAfford(cost));
       el.querySelector(".c").textContent = CP.money(cost);
       list.appendChild(el);
     });
     $("#build-help").innerHTML = R.focus
-      ? `Building in <b>${CP.esc(R.focus.name)}</b>${R.focus.def.cost !== 1 ? ` (land costs ×${R.focus.def.cost})` : ""}. Pick a building, then click a lot.`
-      : "Pick a building, then click a district to zoom in and place it on a lot.";
+      ? `🏗️ Building in <b>${CP.esc(R.focus.name)}</b>${R.focus.def.cost !== 1 ? ` (land costs ×${R.focus.def.cost})` : ""}. Pick a building, then click a lot. Hover a card for details.`
+      : "🏗️ Pick a building, then click a district to zoom in and place it on a lot. Hover a card for details.";
 
     // Plan: city-wide band per metric
     CP.DOMAINS.forEach((_, i) => ($("#mchip-" + i).innerHTML = CP.chip(sim.metricAvg(i), true)));
-    // Missions
-    $("#mission-count").textContent = `${missions.done.length}/${CP.MISSIONS.total}`;
-    let html = missions.active.map((x) => missionCard(x)).join("");
-    if (!missions.active.length) html = `<p class="muted">All contracts are complete. Keep building until your term ends.</p>`;
-    html += `<div class="mdone muted">Completed: ${missions.done.length} of ${CP.MISSIONS.total}${missions.expired.length ? ` · expired: ${missions.expired.length}` : ""}</div>`;
+    // Missions: emergencies on top, then accepted missions, then civilians waiting with offers
+    const emerg = CP.events.active;
+    const pill = $("#mission-count");
+    pill.textContent = emerg.length ? `🚨 ${emerg.length}` : `${missions.active.length}`;
+    pill.classList.toggle("alert", emerg.length > 0);
+    let html = emerg.map(emergencyCard).join("");
+    html += missions.active.map((x) => missionCard(x)).join("");
+    if (!missions.active.length) html += `<p class="muted">No missions right now. Click a resident with a <b class="bang">!</b> on the map to take one on.</p>`;
+    if (missions.offers.length) {
+      html += `<div class="offers-h">Residents with jobs for you</div>` + missions.offers.map((o) =>
+        `<div class="offer" data-id="${o.id}" title="Fly to ${CP.esc(o.giver.name)}"><span class="bang">!</span><span><b>${CP.esc(o.giver.name)}</b> <span class="muted">· ${CP.esc(o.d.name)}</span></span><button class="go">Talk ▸</button></div>`).join("");
+    }
+    html += `<div class="mdone muted">Completed: ${missions.done.length}${missions.expired.length ? ` · failed: ${missions.expired.length}` : ""}${missions.discarded.length ? ` · discarded: ${missions.discarded.length}` : ""}</div>`;
     $("#mission-list").innerHTML = html;
-    R.pins = missions.active.map((x) => ({ d: missions.focus(x), icon: CP.DOMAINS[missions.metrics(x)[0]].icon }));
+    R.pins = missions.active.map((x) => ({ d: missions.focus(x), icon: missions.secret(x) ? "🗺️" : x.kind === "build" ? CP.BUILDINGS[x.type].icon : CP.DOMAINS[missions.metrics(x)[0]].icon }));
     if (ui.mission && !missions.active.includes(ui.mission)) ui.mission = null;
     if (!$("#profile").classList.contains("hidden") && R.focus) ui.profile(R.focus);
     if (ui.tab === "plan") { indKey = ""; ui.renderIndicators(); }
@@ -223,20 +288,37 @@
   function missionCard(m) {
     const cur = missions.current(m), goal = missions.goal(m);
     const on = m === ui.activeMission();
-    const tries = CP.BUILD_ORDER.filter((t) => missions.metrics(m).some((i) => CP.BUILDINGS[t].gain[i] >= 20)).slice(0, 2)
+    const secret = missions.secret(m);
+    const tries = secret || m.kind === "build" ? "" : CP.BUILD_ORDER.filter((t) => missions.metrics(m).some((i) => CP.BUILDINGS[t].gain[i] >= 20)).slice(0, 2)
       .map((t) => `${CP.BUILDINGS[t].icon} ${CP.BUILDINGS[t].name}`).join(", ");
-    const nowGoal = m.kind === "multi"
-      ? `<span>Now <b>${cur}</b> districts</span>${arrow}<span>Goal <b>${goal}</b></span>`
+    const nowGoal = m.kind === "multi" ? `<span>Now <b>${cur}</b> districts</span>${arrow}<span>Goal <b>${goal}</b></span>`
+      : m.kind === "build" ? `<span>Built <b>${cur}</b> of 1</span>`
+      : secret ? `<span class="muted">The problem is hidden. Find it in <b>Plan</b>.</span>`
       : `<span>Now ${CP.chip(cur, true)}</span>${arrow}<span>Goal ${CP.chip(m.target)}</span>`;
     const tl = missions.timeLeft(m);
+    const kindTag = secret ? `<span class="ktag plan">Planning · ×${CP.MISSIONS.planBonus} grant</span>` : m.kind === "build" ? `<span class="ktag build">Build</span>` : "";
     return `<div class="mission ${on ? "on" : ""} k-${m.kind}" data-id="${m.id}" title="Go to ${CP.esc(missions.focus(m).name)}">
       <div class="mt">${m.icon} ${CP.esc(m.title)}</div>
-      ${m.data ? `<div class="mdata">📊 ${CP.esc(m.data)}</div>` : ""}
+      <div class="mgiver muted small">From <b>${CP.esc(m.giver.name)}</b> · ${CP.esc(m.d.name)} ${kindTag}</div>
+      ${m.data ? `<div class="mdata">${secret ? "🗺️" : m.kind === "build" ? "🏗️" : "📊"} ${CP.esc(m.data)}</div>` : ""}
       ${tl !== null ? `<div class="mtime">⏱ <span data-timer="${m.id}">${CP.clock(tl)}</span> left · bonus grant</div>` : ""}
       <div class="mrow mnow">${nowGoal}</div>
       <div class="prog"><span style="width:${missions.progress(m) * 100}%"></span></div>
       <div class="mrow"><span class="muted small">${tries ? "Try: " + tries : ""}</span><span class="grant">${CP.money(m.grant)}</span></div>
-      <button class="go">Go ▸</button>
+      <div class="mbtns"><button class="discard" title="Discard this mission and get a new one for free">🗑 Discard</button><button class="go">Go ▸</button></div>
+    </div>`;
+  }
+  // an active disaster: always at the top, can't be discarded
+  function emergencyCard(dis) {
+    const dm = CP.DOMAINS[dis.p.m];
+    const mood = Math.round(CP.events.moodLost(dis));
+    return `<div class="mission emergency" data-dis="${dis.id}" title="Fly to the ${dis.t.name.toLowerCase()}">
+      <div class="etag">🚨 Emergency</div>
+      <div class="mt">${dis.t.icon} ${dis.t.name} in ${CP.esc(dis.d.name)}</div>
+      <div class="mdata">${CP.esc(dis.text)}</div>
+      <div class="eff"><span>💸 No revenue from ${CP.esc(dis.d.name)}</span><span>😟 Happiness <b data-mood="${dis.id}">${mood ? "−" + mood : ""}</b> falling</span><span>${dm.icon} ${dm.short} −${Math.round(dis.p.amount)}</span></div>
+      <div class="mrow"><span class="muted small">Click it on the map to repair.</span><span class="grant neg">${CP.money(dis.cost)}</span></div>
+      <div class="mbtns"><button class="go">Go ▸</button></div>
     </div>`;
   }
 
@@ -266,6 +348,11 @@
     for (const m of missions.active) {
       const el = document.querySelector(`[data-timer="${m.id}"]`);
       if (el) el.textContent = CP.clock(missions.timeLeft(m));
+    }
+    for (const dis of CP.events.active) {
+      const el = document.querySelector(`[data-mood="${dis.id}"]`);
+      const v = Math.round(CP.events.moodLost(dis));
+      if (el) el.textContent = v ? "−" + v : "";
     }
     positionCoach();
   };
@@ -344,6 +431,11 @@
   ui.lotTip = function (lot) {
     const z = CP.ZONES[lot.zone];
     const ok = CP.BUILD_ORDER.filter((t) => CP.BUILDINGS[t].zones.includes(lot.zone)).map((t) => CP.BUILDINGS[t].icon).join(" ");
+    if (lot.building && lot.building.prebuilt) {
+      const b = lot.building, spec = CP.BUILDINGS[b.type];
+      return `<div class="tt-h">${spec.icon} ${CP.esc(b.name)}</div><div class="muted">${CP.esc(b.landmark.blurb || "")}</div>
+        <div style="margin-top:4px">Real Calgary infrastructure, working since day one as a <b>${spec.name}</b>: ${spec.short}</div>`;
+    }
     let html = `<div class="tt-h">${z.icon} ${z.name} lot · ${CP.esc(lot.d.name)}</div>`;
     if (lot.building) return html + `<div>${CP.BUILDINGS[lot.building.type].icon} ${CP.BUILDINGS[lot.building.type].name}</div>`;
     if (sim.isLocked(lot)) return html + `<div class="muted">🔒 Opens after ${lot.lock * CP.MISSIONS.unlockEvery} completed missions.</div>`;
@@ -359,7 +451,49 @@
     el.style.left = Math.max(8, Math.min(window.innerWidth - w - 10, x + 22)) + "px";
     el.style.top = Math.max(70, Math.min(window.innerHeight - h - 10, y + 22)) + "px";
   };
+  // tooltip placed above an element (the build bar)
+  ui.tooltipAbove = function (html, r) {
+    const el = tt();
+    el.innerHTML = html;
+    el.className = "";
+    const w = el.offsetWidth, h = el.offsetHeight;
+    el.style.left = CP.clamp(r.left + r.width / 2 - w / 2, 8, window.innerWidth - w - 8) + "px";
+    el.style.top = Math.max(70, r.top - h - 10) + "px";
+  };
   ui.hideTooltip = () => (tt().className = "hidden");
+  ui.disasterTip = function (dis) {
+    const dm = CP.DOMAINS[dis.p.m];
+    return `<div class="tt-h">${dis.t.icon} ${dis.t.name} in ${CP.esc(dis.d.name)}</div><div>${CP.esc(dis.text)}</div>
+      <div class="neg" style="margin-top:4px">💸 No revenue · 😟 happiness falling · ${dm.icon} ${dm.short} −${Math.round(dis.p.amount)}</div>
+      <div class="tt-cost">Click to repair · ${CP.money(dis.cost)}</div>`;
+  };
+
+  // ---------- repair card ----------
+  let repairFor = null;
+  ui.repair = function (dis, x, y) {
+    repairFor = dis;
+    const el = $("#repair");
+    const dm = CP.DOMAINS[dis.p.m];
+    const mood = Math.round(CP.events.moodLost(dis));
+    const ok = sim.canAfford(dis.cost);
+    el.innerHTML = `<div class="rp-h">${dis.t.icon} ${dis.t.name} · ${CP.esc(dis.d.name)}</div>
+      <p>${CP.esc(dis.text)}</p>
+      <ul><li>💸 ${CP.esc(dis.d.name)} pays no revenue until it is fixed (−${CP.money(dis.d.revenue)}/min).</li>
+        <li>😟 Residents' happiness is falling${mood ? ` (−${mood} so far)` : ""}. What's lost won't come back.</li>
+        <li>${dm.icon} ${dm.label} −${Math.round(dis.p.amount)}: repairing restores it.</li></ul>
+      <div class="rp-btns"><button class="btn" data-act="close">Not now</button>
+        <button class="btn primary" data-act="fix" ${ok ? "" : "disabled"}>🛠 Repair · ${CP.money(dis.cost)}</button></div>
+      ${ok ? "" : `<div class="neg small">You need ${CP.money(dis.cost)}. You have ${CP.money(Math.floor(sim.budget))}.</div>`}`;
+    el.classList.remove("hidden");
+    const w = el.offsetWidth, h = el.offsetHeight;
+    el.style.left = CP.clamp(x - w / 2, 8, window.innerWidth - w - 8) + "px";
+    el.style.top = CP.clamp(y + 20, 70, window.innerHeight - h - 10) + "px";
+  };
+  ui.hideRepair = function () {
+    repairFor = null;
+    $("#repair").classList.add("hidden");
+  };
+  ui.repairOpen = () => !!repairFor;
   ui.toast = function (html, cls, ms) {
     const el = document.createElement("div");
     el.className = "toast " + (cls || "");
@@ -387,7 +521,9 @@
     const say = CP.residents.say(r);
     const counts = {};
     let locked = 0, free = 0;
+    const real = d.lots.filter((l) => l.prebuilt).map((l) => `${CP.BUILDINGS[l.building.type].icon} ${CP.esc(l.building.name)}`);
     for (const l of d.lots) {
+      if (l.prebuilt) continue;
       counts[l.zone] = (counts[l.zone] || 0) + 1;
       if (sim.isLocked(l)) locked++;
       else if (!l.building) free++;
@@ -398,10 +534,8 @@
     if (d.def.cost > 1.2) traits.push(`<span class="trait">🏷 Expensive land ×${d.def.cost}</span>`);
     const pr = sim.protests.get(d.id);
     if (pr > 0) traits.push(`<span class="trait bad">📢 Protest: building paused ${Math.ceil(pr)} s</span>`);
-    const evs = sim.penalties.filter((p) => p.d === d && !p.fixed).map((p) => {
-      const t = CP.EVENT_TYPES[p.ev];
-      return `<div class="pevent">${t.icon} <b>${t.name}</b>: ${CP.DOMAINS[p.m].short} −${Math.round(p.amount)}. Fix it with a ${t.fix.map((f) => CP.BUILDINGS[f].name).join(" or ")}.</div>`;
-    }).join("");
+    const evs = CP.events.inDistrict(d).map((dis) =>
+      `<div class="pevent">${dis.t.icon} <b>${dis.t.name}</b>: ${CP.DOMAINS[dis.p.m].short} −${Math.round(dis.p.amount)}, no revenue, happiness falling. Click it on the map to repair (${CP.money(dis.cost)}).</div>`).join("");
     el.innerHTML = `
       <div class="pf-h"><div><h3>${CP.esc(d.name)}</h3><div class="muted small">≈ ${d.population.toLocaleString()} residents · ${d.tracts.length} census tracts</div></div>
         <button class="btn" data-city>◂ City</button></div>
@@ -419,7 +553,8 @@
           <div class="pf-say ${say.mood}">“${CP.esc(say.text)}”</div>
           <button class="btn small" data-talk>💬 Talk</button></div>
       </div>
-      <div class="pf-lots"><b>${d.lots.length} lots:</b> ${Object.entries(counts).map(([z, n]) => `${CP.ZONES[z].icon} ${CP.ZONES[z].name} ×${n}`).join(" · ")}
+      <div class="pf-lots"><b>${d.lots.length - real.length} lots:</b> ${Object.entries(counts).map(([z, n]) => `${CP.ZONES[z].icon} ${CP.ZONES[z].name} ×${n}`).join(" · ")}
+        ${real.length ? `<div class="small">Already here: ${real.join(" · ")}</div>` : ""}
         <div class="muted small">${free} open${locked ? ` · ${locked} locked 🔒` : ""}. Real ratings come from the 2024 CEI.</div></div>`;
     const c = el.querySelector("canvas").getContext("2d");
     c.scale(2, 2);
@@ -489,7 +624,7 @@
     const rect = (el) => el && el.offsetParent !== null ? el.getBoundingClientRect() : null;
     if (step.id === "go") return { r: rect($("#mission-list .go")), side: "right" };
     if (step.id === "plan") return { r: rect($('.tab[data-tab="build"]')), side: "below" };
-    if (step.id === "pick") return { r: rect($("#build-list .bld.helps") || $("#build-list .bld")), side: "right" };
+    if (step.id === "pick") return { r: rect($("#build-list .bld.helps") || $("#build-list .bld")), side: "above" };
     if (step.id === "lot" && R.focus) {
       const lot = R.focus.lots.find((l) => !l.building && !sim.isLocked(l) && ui.selected && CP.BUILDINGS[ui.selected].zones.includes(l.zone));
       if (lot) { const [x, y] = R.toScreen(lot.x, lot.y); return { r: { left: x - 40, right: x + 40, top: y - 30, bottom: y + 30, width: 80, height: 60 }, side: "right" }; }
@@ -505,33 +640,63 @@
     const r = a.r;
     el.dataset.side = a.side;
     if (a.side === "below") { el.style.left = CP.clamp(r.left + r.width / 2 - el.offsetWidth / 2, 8, window.innerWidth - el.offsetWidth - 8) + "px"; el.style.top = r.bottom + 14 + "px"; }
+    else if (a.side === "above") { el.style.left = CP.clamp(r.left + r.width / 2 - el.offsetWidth / 2, 8, window.innerWidth - el.offsetWidth - 8) + "px"; el.style.top = r.top - el.offsetHeight - 16 + "px"; }
     else { el.style.left = Math.min(window.innerWidth - el.offsetWidth - 8, r.right + 16) + "px"; el.style.top = Math.max(70, r.top + r.height / 2 - el.offsetHeight / 2) + "px"; }
   }
 
-  // ---------- Deputy City Manager panel ----------
-  // ui.dcm(["page one", "page two"], { done, button, extra, report })
-  let dcm = null, typer = null;
+  // ---------- portrait dialogue panel (the Deputy City Manager and civilians) ----------
+  // ui.dcm(pages, { done, button, extra, report, choices, cancel })
+  //   pages: strings (spoken by the Deputy City Manager) or { text, speaker } where speaker is a resident.
+  //   choices: buttons shown on the last page instead of Continue, e.g. Accept / Decline:
+  //            [{ label, cls, fn }]; cancel = index chosen by Esc.
+  let dcm = null, typer = null, shownSpeaker;
   ui.dcmOpen = () => !!dcm;
+  ui.dcmHasChoices = () => !!(dcm && dcm.opts.choices);
+  const pageText = (p) => (typeof p === "string" ? p : p.text);
   ui.dcm = function (pages, opts) {
     opts = opts || {};
-    if (dcm && !opts.replace) { dcm.pages.push(...pages); showPageCount(); return; } // already talking: add to the queue
+    if (dcm && !opts.replace && !opts.choices && !dcm.opts.choices) { dcm.pages.push(...pages); showPageCount(); return; } // already talking: add to the queue
+    if (dcm && !opts.replace && dcm.opts.choices) { (dcm.after = dcm.after || []).push([pages, opts]); return; } // wait for the choice
     dcm = { pages: pages.slice(), i: 0, opts };
     $("#dcm").className = opts.report ? "report" : "";
     $("#dcm-extra").innerHTML = "";
     if (CP.game.started) CP.game.paused = true;
     ui.hideTooltip();
+    ui.hideSpeech();
     CP.audio.radio();
     typePage();
   };
   function showPageCount() {
     $("#dcm-page").textContent = dcm.pages.length > 1 ? `${dcm.i + 1} / ${dcm.pages.length}` : "";
   }
+  // who is talking: name, title and portrait (redrawn only when the speaker changes)
+  function showSpeaker(r) {
+    if (shownSpeaker === r) return;
+    shownSpeaker = r;
+    const c = $("#dcm-face").getContext("2d");
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.clearRect(0, 0, 224, 264);
+    if (!r) {
+      $("#dcm-kicker").textContent = "◈ Incoming transmission · City Hall";
+      $("#dcm-name").textContent = CP.STORY.dcm.name;
+      $("#dcm-title").textContent = CP.STORY.dcm.title;
+      drawPortrait(c);
+      return;
+    }
+    $("#dcm-kicker").textContent = `◈ Resident · ${r.d.name}`;
+    $("#dcm-name").textContent = r.name;
+    $("#dcm-title").textContent = `Lives in ${r.d.name}`;
+    drawCivilian(c, r);
+  }
   function typePage() {
-    const text = dcm.pages[dcm.i], el = $("#dcm-text");
+    const page = dcm.pages[dcm.i], text = pageText(page), el = $("#dcm-text");
     const last = dcm.i === dcm.pages.length - 1;
+    showSpeaker(typeof page === "string" ? null : page.speaker || null);
     let n = 0;
     el.textContent = "";
     el.classList.add("typing");
+    $("#dcm-choices").innerHTML = "";
+    $("#dcm-next").classList.remove("hidden");
     $("#dcm-next").textContent = last ? dcm.opts.button || "Continue ▸" : "Continue ▸";
     showPageCount();
     clearInterval(typer);
@@ -545,23 +710,46 @@
   function finishTyping() {
     clearInterval(typer);
     typer = null;
-    $("#dcm-text").textContent = dcm.pages[dcm.i];
+    $("#dcm-text").textContent = pageText(dcm.pages[dcm.i]);
     $("#dcm-text").classList.remove("typing");
-    if (dcm.i === dcm.pages.length - 1 && dcm.opts.extra) {
+    const last = dcm.i === dcm.pages.length - 1;
+    if (last && dcm.opts.extra) {
       $("#dcm-extra").innerHTML = dcm.opts.extra;
       if (dcm.opts.onExtra) dcm.opts.onExtra();
+    }
+    if (last && dcm.opts.choices) {
+      $("#dcm-next").classList.add("hidden");
+      $("#dcm-choices").innerHTML = dcm.opts.choices.map((c, i) => `<button class="choice ${c.cls || ""}" data-i="${i}" ${c.disabled ? "disabled" : ""}>${c.label}</button>`).join("");
     }
   }
   // Continue: first finishes the typing, then moves to the next page, then closes
   ui.dcmNext = function () {
     if (!dcm) return;
     if (typer) return finishTyping();
+    if (dcm.opts.choices && dcm.i === dcm.pages.length - 1) return; // waiting for Accept / Decline
     CP.audio.click();
     if (dcm.i < dcm.pages.length - 1) { dcm.i++; return typePage(); }
     const done = dcm.opts.done;
-    ui.dcmClose();
-    if (done) done();
+    closeAndFlush(() => done && done());
   };
+  ui.dcmChoose = function (i) {
+    if (!dcm || !dcm.opts.choices) return;
+    if (typer) finishTyping();
+    const c = dcm.opts.choices[i];
+    if (!c || c.disabled) return;
+    CP.audio.click();
+    closeAndFlush(() => c.fn && c.fn());
+  };
+  ui.dcmCancel = function () {
+    if (dcm && dcm.opts.choices && dcm.opts.cancel !== undefined) ui.dcmChoose(dcm.opts.cancel);
+  };
+  // close, run the callback, then show anything that was queued while a choice was pending
+  function closeAndFlush(fn) {
+    const after = (dcm && dcm.after) || [];
+    ui.dcmClose();
+    fn();
+    for (const [pages, opts] of after) ui.dcm(pages, opts);
+  }
   ui.dcmClose = function () {
     clearInterval(typer);
     typer = null;
@@ -570,9 +758,20 @@
     CP.game.paused = false;
   };
 
+  // a civilian's portrait: head and shoulders over a wash of their district's colour
+  function drawCivilian(c, r) {
+    c.setTransform(2, 0, 0, 2, 0, 0);
+    const g = c.createLinearGradient(0, 0, 0, 132);
+    g.addColorStop(0, S.shade(r.d.color, 0.55)); g.addColorStop(1, "#0a1428");
+    c.fillStyle = g; c.fillRect(0, 0, 112, 132);
+    c.fillStyle = "rgba(255,255,255,0.08)";
+    for (let i = 0; i < 6; i++) c.fillRect(i * 20, 70 + (i % 3) * 8, 14, 62);
+    S.resident(c, 56, 178, 1.65, r.look, { phase: 0, moving: false, dir: 1 });
+  }
+
   // original portrait of the Deputy City Manager, drawn with canvas shapes
   function drawPortrait(c) {
-    c.scale(2, 2); // canvas is 224x264 for sharpness, drawn as 112x132
+    c.setTransform(2, 0, 0, 2, 0, 0); // canvas is 224x264 for sharpness, drawn as 112x132
     const g = c.createLinearGradient(0, 0, 0, 132);
     g.addColorStop(0, "#0d3a5c"); g.addColorStop(1, "#06182c");
     c.fillStyle = g; c.fillRect(0, 0, 112, 132);
@@ -664,8 +863,9 @@
         <div class="rep-break">
           <span>Calgary Equity <b>${overall.toFixed(1)}</b>/100 ${CP.chip(overall)}</span><span>${fs.equity.toLocaleString()} pts</span>
           <span>Budget left over (${CP.money(Math.floor(sim.budget))})</span><span>${fs.budget.toLocaleString()} pts</span>
-          <span class="muted">Missions completed</span><span class="muted">${missions.done.length} of ${CP.MISSIONS.total}</span>
-          <span class="muted">Buildings built</span><span class="muted">${sim.buildings.length}</span>
+          <span class="muted">Missions completed</span><span class="muted">${missions.done.length}</span>
+          <span class="muted">Disasters repaired</span><span class="muted">${CP.events.log.filter((x) => x.repaired).length} of ${CP.events.log.length}</span>
+          <span class="muted">Buildings built</span><span class="muted">${sim.buildings.filter((b) => !b.prebuilt).length}</span>
         </div>
       </div>
       <div class="rep-h">Your Calgary vs the real Calgary (2024 Calgary Equity Index)</div>

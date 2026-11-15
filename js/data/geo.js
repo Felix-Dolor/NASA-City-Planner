@@ -73,7 +73,7 @@
     L("TELUS Spark", 51.0510, -114.0402, "spark", 18, { blurb: "Science centre with a big dome theatre." }),
     L("BMO Centre", 51.0395, -114.0555, "stampede", 18, { blurb: "Stampede Park - the Greatest Outdoor Show on Earth.", belonging: true }),
     L("McMahon Stadium", 51.0703, -114.1215, "stadium", 20, { blurb: "Home of the Calgary Stampeders." }),
-    L("University of Calgary", 51.0780, -114.1330, "campus", 25, { blurb: "33,000 students - and a lot of economic opportunity." }),
+    L("University of Calgary", 51.0780, -114.1330, "campus", 25, { blurb: "33,000 students - and a lot of economic opportunity.", service: "school" }),
     L("Foothills Medical Centre", 51.0652, -114.1336, "hospital", 45, { blurb: "Alberta's largest hospital.", service: "hospital" }),
     L("Peter Lougheed Centre", 51.0790, -113.9840, "hospital", 35, { blurb: "NE Calgary's acute care hospital.", service: "hospital" }),
     L("Rockyview General Hospital", 50.9906, -114.0981, "hospital", 32, { blurb: "Southwest hospital on the Glenmore Reservoir.", service: "hospital" }),
@@ -83,6 +83,7 @@
     L("Canada Olympic Park", 51.0833, -114.2140, "skiJump", 70, { blurb: "1988 Winter Olympics ski jumps." }),
     L("Heritage Park", 50.9840, -114.1040, "heritage", 10, { blurb: "Living history village on the reservoir." }),
     L("Calgary International Airport", 51.1260, -114.0120, "airport", 22, { blurb: "YYC - Canada's 4th busiest airport." }),
+    L("Glenmore Reservoir", 50.9968, -114.1135, "reservoir", 14, { blurb: "Dam and water treatment plant that supplies much of Calgary's drinking water.", service: "reservoir" }),
     L("Fort Calgary", 51.0457, -114.0446, "fort", 8, { blurb: "Where the Bow meets the Elbow - Calgary's 1875 origin." }),
   ];
 })();

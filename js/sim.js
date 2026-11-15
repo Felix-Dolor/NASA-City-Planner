@@ -254,7 +254,33 @@
       d.homeW = d.homes.reduce((a, h) => a + h.w, 0);
     }
     makeLots();
+    makePrebuilt();
   };
+
+  // Real Calgary infrastructure (hospitals, the Central Library, Chinook Centre, the university and the
+  // Glenmore Reservoir) already stands on its own lot when the term starts and works like any building.
+  // The 2024 CEI already reflects these places, so each district's base is lowered by what they add:
+  // the starting scores stay exactly the real ones.
+  function makePrebuilt() {
+    let id = sim.lots.length;
+    for (const l of CP.LANDMARKS) {
+      const spec = l.service && CP.BUILDINGS[l.service];
+      if (!spec) continue;
+      const [x, y] = l.pos;
+      let d = sim.districtAt(x, y);
+      if (!d) d = sim.districts.slice().sort((a, b) => CP.dist(a.label[0], a.label[1], x, y) - CP.dist(b.label[0], b.label[1], x, y))[0];
+      const lot = { id: id++, d, x, y, zone: spec.zones[0], origZone: spec.zones[0], building: null, house: false, lock: 0, prebuilt: true };
+      const b = { id: sim.nextId++, type: l.service, lot, x, y, d, cost: 0, built: -1e9, demolished: false, rezoned: false, fromZone: lot.zone, prebuilt: true, name: l.name, landmark: l };
+      lot.building = b;
+      l.building = b;
+      d.lots.push(lot);
+      sim.lots.push(lot);
+      sim.buildings.push(b);
+    }
+    const c = contributions(sim.buildings);
+    for (const d of sim.districts) for (let i = 0; i < ND; i++) d.base[i] -= c.add[d.id][i];
+    apply();
+  }
 
   // 4-6 lots per district, spread out near its centre, away from water, highways and landmarks
   function makeLots() {
@@ -381,8 +407,17 @@
     for (let i = 1; i < ND; i++) if (d.score[i] < d.score[m]) m = i;
     return m;
   };
-  sim.upkeep = () => sim.buildings.reduce((a, b) => a + (CP.BUILDINGS[b.type].upkeep || 0), 0);
-  sim.income = () => CP.INCOME_PER_MIN + sim.buildings.reduce((a, b) => a + (CP.BUILDINGS[b.type].income || 0), 0);
+  // city revenue comes from every district in proportion to its population; a district hit by an
+  // active disaster pays nothing (neither does business tax from buildings standing in it)
+  const totalPop = sim.districts.reduce((a, d) => a + d.population, 0);
+  sim.districts.forEach((d) => (d.revenue = (CP.INCOME_PER_MIN * d.population) / totalPop));
+  const live = (d) => !(sim.disrupted && sim.disrupted.has(d.id));
+  sim.upkeep = () => sim.buildings.reduce((a, b) => a + (b.prebuilt ? 0 : CP.BUILDINGS[b.type].upkeep || 0), 0);
+  sim.tax = () => sim.buildings.reduce((a, b) => a + (live(b.d) ? CP.BUILDINGS[b.type].income || 0 : 0), 0);
+  sim.revenue = () => sim.districts.reduce((a, d) => a + (live(d) ? d.revenue : 0), 0);
+  sim.income = () => sim.revenue() + sim.tax();
+  sim.lostIncome = () => sim.districts.reduce((a, d) => a + (live(d) ? 0 : d.revenue), 0) +
+    sim.buildings.reduce((a, b) => a + (live(b.d) ? 0 : CP.BUILDINGS[b.type].income || 0), 0);
   sim.netPerMin = () => sim.income() - sim.upkeep();
 
   // ---------- placing buildings ----------
@@ -396,7 +431,7 @@
     const out = { lot, d: lot.d, ok: false, base: sim.baseCost(type, lot.d), demolish: lot.house ? CP.DEMOLISH.cost : 0, rezone: 0 };
     out.allowed = spec.zones.includes(lot.zone);
     out.cost = out.base + out.demolish;
-    if (lot.building) return Object.assign(out, { why: `This lot already has a ${CP.BUILDINGS[lot.building.type].name}.` });
+    if (lot.building) return Object.assign(out, { why: `This lot already has ${lot.building.name || "a " + CP.BUILDINGS[lot.building.type].name}.` });
     if (sim.isLocked(lot)) return Object.assign(out, { locked: true, why: `Locked. Opens after ${lot.lock * CP.MISSIONS.unlockEvery} completed missions.` });
     const pr = sim.protests.get(lot.d.id);
     if (pr > 0) return Object.assign(out, { protest: true, why: `Residents are protesting. Building here resumes in ${Math.ceil(pr)} s.` });
@@ -452,7 +487,7 @@
     const before = d.score.slice(), overallBefore = sim.overall();
     const b = {
       id: sim.nextId++, type, lot, x: lot.x, y: lot.y, d, cost: check.cost, built: performance.now(),
-      demolished: lot.house, rezoned: !check.allowed, fromZone: lot.zone, fixed: [],
+      demolished: lot.house, rezoned: !check.allowed, fromZone: lot.zone,
     };
     if (b.rezoned) lot.zone = check.toZone;
     lot.house = false;
@@ -460,9 +495,6 @@
     sim.buildings.push(b);
     sim.budget -= check.cost;
     sim.spent += check.cost;
-    // a matching building recovers event damage in its district
-    for (const p of sim.penalties)
-      if (!p.fixed && p.d === d && CP.EVENT_TYPES[p.ev].fix.includes(type)) { p.fixed = true; b.fixed.push(p); }
     apply();
     const h = sim.harm.find((x) => x.b === b);
     if (h && !h.buffered && CP.BUILDINGS[type].area.harm && h.homes >= CP.PROTEST.homes) {
@@ -482,17 +514,19 @@
     b.lot.house = b.demolished;
     sim.budget += b.cost;
     sim.spent -= b.cost;
-    for (const p of b.fixed) p.fixed = false;
     if (b.protest) sim.protests.delete(b.d.id);
     apply();
     return true;
   };
 
-  // ---------- random events ----------
-  sim.addPenalty = function (d, m, ev) {
+  // ---------- disasters ----------
+  // how far to push a metric down so it falls one band
+  sim.bandDrop = function (d, m) {
     const s = d.score[m], idx = CP.bandIndex(s);
-    const amount = idx === 0 ? Math.min(8, s) : CP.clamp(s - ((idx - 1) * 20 + 12), 8, 20); // one band down
-    const p = { d, m, ev, amount, fixed: false };
+    return idx === 0 ? Math.min(8, s) : CP.clamp(s - ((idx - 1) * 20 + 12), 8, 20);
+  };
+  sim.addPenalty = function (d, m, ev) {
+    const p = { d, m, ev, amount: sim.bandDrop(d, m), fixed: false };
     sim.penalties.push(p);
     apply();
     return p;
