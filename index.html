@@ -15,52 +15,87 @@
   <div id="sat-hud" aria-hidden="true">
     <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
     <div class="scan"></div>
-    <div id="sat-readout">
-      <div><b>CEI-SAT 1</b> · PLANNING SATELLITE</div>
-      <div>ALT <span id="alt">408 km</span></div>
+  </div>
+
+  <!-- top bar: budget, timer, equity score, upkeep | tabs | pause, settings, sound -->
+  <header id="topbar" class="hidden">
+    <div id="status" class="panel">
+      <div class="stat" id="stat-budget">
+        <span class="lbl">Budget</span>
+        <span class="val"><span id="budget">$30M</span> <span id="rate" class="rate"></span></span>
+        <div class="hint" id="budget-hint"></div>
+      </div>
+      <div class="stat"><span class="lbl">Term ends in</span><span id="timer" class="val">10:00</span></div>
+      <div class="stat stat-eq" title="Calgary's overall equity: the average of all six ratings across every district">
+        <span class="lbl">Calgary Equity</span>
+        <span class="val"><span id="eq-num">0</span><small>/100</small> <span id="equity"></span></span>
+        <div class="eqbar"><span id="eq-start"></span><span id="eq-fill"></span><span id="eq-gain"></span></div>
+      </div>
+      <div class="stat" title="Running costs of everything you have built"><span class="lbl">Upkeep</span><span id="upkeep" class="val">$0/min</span></div>
     </div>
-  </div>
-
-  <!-- always-visible strip: budget, time left, overall equity -->
-  <div id="status" class="panel hidden">
-    <div class="stat" title="Money you can spend on buildings"><span class="lbl">Budget</span><span id="budget" class="val">$30M</span></div>
-    <div class="stat" title="Time left in your term"><span class="lbl">Term ends in</span><span id="timer" class="val">8:00</span></div>
-    <div class="stat" title="Calgary's overall equity rating"><span class="lbl">Calgary equity</span><span id="equity" class="val"></span></div>
-    <button class="btn icon" id="btn-sound" title="Sound on/off">🔊</button>
-  </div>
-
-  <!-- the three tabs -->
-  <nav id="tabs" class="panel hidden">
-    <button class="tab" data-tab="build">🏗️ Build</button>
-    <button class="tab" data-tab="plan">🗺️ Plan</button>
-    <button class="tab" data-tab="missions">🎯 Missions <span id="mission-count" class="pill"></span></button>
-  </nav>
+    <nav id="tabs" class="panel">
+      <button class="tab" data-tab="missions">🎯 Missions <span id="mission-count" class="pill"></span></button>
+      <button class="tab" data-tab="plan">🗺️ Plan</button>
+      <button class="tab" data-tab="build">🏗️ Build</button>
+    </nav>
+    <div id="controls" class="panel">
+      <span id="alt-wrap" title="Satellite altitude">🛰️ <span id="alt">408 km</span></span>
+      <button class="btn icon" id="btn-pause" title="Pause (P)">⏸</button>
+      <button class="btn icon" id="btn-settings" title="Settings">⚙</button>
+      <button class="btn icon" id="btn-sound" title="Sound on/off (M)">🔊</button>
+    </div>
+  </header>
 
   <!-- only the active tab's panel is shown -->
   <aside id="panel" class="panel hidden">
-    <section id="panel-build" class="tabpanel">
-      <h3>Build</h3>
-      <p class="muted">Pick a building, then click the map to place it.</p>
-      <div id="build-list"></div>
-    </section>
-    <section id="panel-plan" class="tabpanel">
-      <h3>Plan</h3>
-      <p class="muted">The map shows how fair each district is. Hover over a district to see all six ratings.</p>
-      <div id="metric-list"></div>
-      <div id="metric-about"></div>
-      <div id="band-legend"></div>
-    </section>
     <section id="panel-missions" class="tabpanel">
       <h3>Missions</h3>
-      <p class="muted">Contracts from the Deputy City Manager. Finish one to earn its grant.</p>
+      <p class="muted">Contracts from the Deputy City Manager. Press <b>Go</b> to jump to the district. Finish one to earn its grant.</p>
       <div id="mission-list"></div>
     </section>
+    <section id="panel-plan" class="tabpanel">
+      <h3>Plan <span class="muted small">· real 2024 Calgary Equity Index data</span></h3>
+      <p class="muted">Districts are coloured by how fair life is for the chosen metric. Hover a district to see its real numbers.</p>
+      <div id="metric-list"></div>
+      <div id="metric-about"></div>
+      <div id="indicators"></div>
+      <div id="band-legend"></div>
+    </section>
+    <section id="panel-build" class="tabpanel">
+      <h3>Build</h3>
+      <p class="muted" id="build-help">Pick a building, then click a district to zoom in and place it on a lot.</p>
+      <div id="build-list"></div>
+    </section>
   </aside>
+
+  <!-- district profile (shown while zoomed into a district) -->
+  <aside id="profile" class="panel hidden"></aside>
+  <button id="btn-city" class="btn hidden">◂ City view <kbd>Esc</kbd></button>
 
   <div id="tooltip" class="hidden"></div>
   <div id="speech" class="hidden"></div>
   <div id="toasts"></div>
+  <div id="banner" class="hidden"></div>
+  <button id="undo" class="hidden"></button>
+  <div id="coach" class="hidden"><div class="coach-text"></div><button class="coach-skip">Skip tips</button></div>
   <button id="btn-skip" class="btn hidden">Skip intro ▸▸</button>
+
+  <div id="settings" class="panel hidden">
+    <h3>Settings</h3>
+    <label>Volume <input type="range" id="set-volume" min="0" max="1" step="0.05" /></label>
+    <label class="row"><input type="checkbox" id="set-music" /> Background music</label>
+    <label>Scroll &amp; zoom speed <input type="range" id="set-scroll" min="0.3" max="2.5" step="0.1" /></label>
+    <p class="muted small">Touchpad: pinch to zoom, two-finger swipe to pan. Mouse: wheel to zoom, drag to pan.</p>
+    <button class="btn" id="set-close">Done</button>
+  </div>
+
+  <div id="paused" class="screen hidden">
+    <div class="pause-card">
+      <h2>Paused</h2>
+      <p class="muted">The term timer is stopped.</p>
+      <button class="btn primary big" id="btn-resume">▶ Resume</button>
+    </div>
+  </div>
 
   <!-- Deputy City Manager transmission panel (used for every message from her) -->
   <div id="dcm" class="hidden">
@@ -82,10 +117,10 @@
   <div id="title" class="screen">
     <div class="title-card">
       <div class="kicker">🛰️ City of Calgary · Planning Satellite</div>
-      <h1>CEI<span>-</span>SAT</h1>
+      <h1>CEI<span>·</span>SAT</h1>
       <h2>Make Calgary the most equitable city on the planet</h2>
       <p>You are Calgary's new <b>Planning Director</b>. From a satellite high above the city, you decide what gets built, and where.</p>
-      <p>You have one <b>8-minute term</b> and a small budget. Build where life is least fair.</p>
+      <p>You have one <b>10-minute term</b> and a small budget. Build where life is least fair.</p>
       <div class="title-actions">
         <button class="btn primary big" id="btn-start">▶ Begin your term</button>
       </div>
@@ -101,6 +136,7 @@
   <script src="js/config.js"></script>
   <script src="js/sim.js"></script>
   <script src="js/challenges.js"></script>
+  <script src="js/events.js"></script>
   <script src="js/world.js"></script>
   <script src="js/sprites.js"></script>
   <script src="js/residents.js"></script>

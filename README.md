@@ -1,6 +1,6 @@
 # CEI-SAT · Calgary Equity Planner
 
-A city-planning game built on the real **2024 Calgary Equity Index (CEI)**. You are Calgary's Planning Director, in command of a planning satellite above the city. You have one 8-minute term to make Calgary the most equitable city on the planet.
+A city-planning game built on the real **2024 Calgary Equity Index (CEI)**. You are Calgary's Planning Director, in command of a planning satellite above the city. You have one 10-minute term to make Calgary the most equitable city on the planet.
 
 ## Play
 
@@ -13,22 +13,40 @@ No build step and no dependencies.
 
 | | |
 |---|---|
-| **Opening** | Two residents talk at street level, the camera pulls back to orbit, and the Deputy City Manager briefs you. Skippable (button or `Esc`). |
-| **Districts** | Calgary's 288 census tracts are grouped into 12 districts. Each district is rated on six metrics: 💼 Economic Opportunity, 🚏 Accessibility & Amenities, ❤️ Population Health, 🤝 Belonging & Safety, 🌱 Human & Social Wellbeing, 🌳 Climate & Environment. |
-| **Bands** | Ratings are shown as bands, never numbers: Perfect (80–100), Good (60–79), Average (40–59), Bad (20–39), Terrible (0–19). |
-| **Build tab** | Ten buildings, each with a cost and the metrics it improves. Pick one, then click the map. A building raises the metrics of the district it stands in. |
-| **Plan tab** | Colours every district by its band for the chosen metric. Hover a district to see all six ratings. |
-| **Missions tab** | Contracts from the Deputy City Manager, such as "Bring Population Health in Forest Lawn to Average". Finishing one pays a grant. |
-| **Residents** | One resident per district wanders their neighbourhood. Hover or click them to hear what they need; it follows their district's weakest metric. |
-| **Ending** | When the timer runs out, the Deputy City Manager delivers a report card. Final score = overall equity × 100 + leftover budget ($M) × 2. |
+| **Opening** | Two residents talk at street level (click to advance each line), the camera pulls back to orbit where you see CEI-SAT 1, and the Deputy City Manager briefs you. Skippable (button or `Esc`). |
+| **Districts** | Calgary's 288 census tracts are grouped into 24 districts named after real communities. Each is rated 0–100 on six metrics: 💼 Economic Opportunity, 🚏 Accessibility & Amenities, ❤️ Population Health, 🤝 Belonging & Safety, 🌱 Human & Social Wellbeing, 🌳 Climate & Environment. |
+| **Bands** | Every rating also shows a band with a symbol, so colour is never the only cue: ★ Perfect (80+), ▲ Good (60+), ● Average (40+), ▼ Bad (20+), ✖ Terrible. |
+| **Calgary Equity** | The top bar shows *Calgary Equity 49.3/100* with a bar. A white tick marks where you started, and green shows what you've gained. |
+| **Two zoom levels** | City view shows districts only. Click a district (or press **Go** on a mission) to zoom in. You can only build in the district you are zoomed into. `Esc` or **◂ City view** goes back. |
+| **Lots & zones** | Each district has 4–6 lots: 🏠 Residential, 🏬 Commercial, 🏭 Industrial or 🌳 Open space. Buildings snap to lots, and each building lists the zones it may use. Hold `Shift` and click to rezone a lot (costs money and goodwill). Some residential lots already have a family home: building there means demolition (extra cost, less housing). Locked lots open as you complete missions. Downtown has few, expensive commercial lots; Saddle Ridge, McKenzie Towne and Seton have open land; Forest Lawn and Ogden have industrial lots next to homes. |
+| **Ghost preview** | With a building selected, hovering a lot turns it green or red, draws the effect circle and shows a card with every rating that changes (in this district and next door), the homes affected, the cost, upkeep and the change in Calgary Equity. In city view, hovering a district shows the rating changes and outlines it in red if you can't afford it. |
+| **Buildings** | 13 buildings, each with trade-offs. Factory, AI Data Centre, CTrain, Hospital, Jobs Hub and Wastewater Plant all have an effect circle that reaches homes across district borders. Factory pollution near homes makes a district worse; a Park within 2.6 km buffers 75% of the harm. CTrain rents rise more in high-rent districts (Downtown, Varsity). |
+| **Money** | City revenue is +$6M/min, paid every 5 s. Every building has upkeep, and some add business tax. The top bar shows the net rate (hover it for the breakdown). Mission grants are the big payouts. |
+| **Undo** | Undo your last placement for 8 s with a full refund (`Ctrl+Z` or the button). You can't undo a building that completed a contract. |
+| **Missions tab** (default) | Contracts from the Deputy City Manager. Each card quotes a real CEI indicator, has a **Go** button (zooms in, opens Plan on the right metric, highlights the district) and a pin on the map. Kinds: one metric, two metrics at once, a whole district, "any 3 more districts", and time-limited bonus grants. The first mission is a guided tutorial. |
+| **Plan tab** | Plan view colours districts by band for the chosen metric. Normal view (Missions/Build) shows zones and buildings. The panel lists every real CEI indicator in that metric for the hovered district next to the Calgary average. |
+| **Build tab** | Each row says "Main: … Also: …", the effect circle, the risk, allowed zones, cost (with the zoomed district's land price), upkeep and tax. Buildings that help the active mission rise to the top with a *Helps mission* tag. |
+| **Residents** | One resident per district. Their need quotes their district's real CEI numbers ("Only 81% of us have a regular doctor. Across Calgary it's 88%."). They complain when something harms them. Homes inside a pollution circle get a red outline and 😟 faces. |
+| **Risk** | An unbuffered polluter that reaches 1,200+ homes sparks a 30-second protest in that district. Three random events per term (always one flood or heavy rain, which favours districts with high CEI flood susceptibility and the river districts Bowness and Inglewood) drop one metric in a district by a band. Building the matching building there recovers it. |
+| **Ending** | The report compares your Calgary with the real 2024 CEI for each of the six metrics, names the biggest gain and the biggest loss (and what caused it), and lists every district. Save your run to the local leaderboard. Final score = Calgary Equity × 100 + leftover budget ($M) × 2. |
 
-Controls: scroll to zoom, drag to pan, `WASD`/arrow keys to move, `Q`/`E` to zoom, `1` `2` `3` for the Build / Plan / Missions tabs, `Enter` or `Space` to continue a message, right-click or `Esc` to cancel a building.
+**Controls:** scroll wheel or touchpad pinch to zoom, drag or two-finger swipe to pan, `WASD`/arrow keys to move, `Q`/`E` to zoom, `1` `2` `3` for Missions / Plan / Build, `P` to pause, `M` to mute, `Shift`+click to rezone, `Ctrl+Z` to undo, `Enter`/`Space` to continue a message, right-click or `Esc` to cancel. ⚙ Settings has volume, background music and scroll/zoom speed.
 
-For testing, `index.html#play` skips the opening, `#play&t=30` sets the seconds left, and `#play&end` jumps to the report card.
+**Dev hooks** (for testing and the demo): `index.html#play` skips the opening, `&notips` skips the tutorial, `&go` jumps into the first mission's district with a building picked, `&t=30` sets the seconds left, `&event=flood` (or `fire`, `storm`, `tornado`, `rain`, `lightning`, `earthquake`, `collapse`) fires an event, `&orbit` shows the satellite view, and `&end` jumps to the report.
+
+## Decisions (design notes, Phase 0)
+
+- **Timer:** 10 minutes (game, briefing and title all say 10).
+- **Districts:** doubled from 12 to 24, all named after real Calgary communities.
+- **Backup:** the pre-revamp playtest build is tagged `demo-backup-v1`.
+
+## Deploying (stable URL)
+
+The game is static files, so any static host works. To use GitHub Pages, push to GitHub and set **Settings → Pages → Source** to **GitHub Actions**. The included `.github/workflows/pages.yml` then publishes the `main` branch on every push. On Netlify or Vercel, deploy the repo root with no build command.
 
 ## Tuning
 
-All numbers a designer would want to change are in `js/config.js`: term length, starting budget, income, building costs and gains, band thresholds and colours, mission count and grant sizes, final score weights, district and resident definitions, and all story text.
+All numbers a designer would want to change are in `js/config.js`: term length, budget, income, upkeep, demolition, rezoning, protests and park buffers; bands; the CEI indicator grouping; zones; buildings (cost, zones, gains, effect circles, risk text); districts (seed point, lots, land price, traits, story, resident); random events; mission settings; and all story text.
 
 ## Project layout
 
@@ -37,14 +55,16 @@ index.html, css/style.css
 js/data/cei-data.js   generated tract data + geometry (tools/build_data.py)
 js/data/geo.js        rivers, roads, CTrain, parks and landmarks (approximate, hand-traced)
 js/core.js            namespace, projection, geometry, helpers
-js/config.js          pacing, bands, metrics, buildings, districts, residents, story text
-js/sim.js             districts, scores, placement rules, final score
+js/config.js          pacing, economy, bands, metrics, indicators, zones, buildings, districts, events, story
+js/sim.js             districts, indicators, homes, lots, effect model, preview, placement, undo, final score
 js/challenges.js      mission contracts and grants
-js/world.js           satellite terrain and sparse city fabric
-js/sprites.js         isometric buildings, landmarks, residents
-js/residents.js       resident wandering, needs and thanks
-js/render.js          camera, overlay, borders, objects, particles
-js/ui.js, js/game.js  interface, Deputy City Manager panel, input, opening, game loop
+js/events.js          random events
+js/world.js           flat-colour terrain and sparse city fabric
+js/sprites.js         isometric buildings, lots, landmarks, residents, the satellite
+js/residents.js       resident wandering, needs, thanks and complaints
+js/render.js          camera, Plan overlay, borders, lots, effect circles, objects, daylight, particles
+js/audio.js           sound effects and background music (one master volume / mute)
+js/ui.js, js/game.js  interface, report, leaderboard, tutorial, input, opening, game loop
 data/raw/             original City of Calgary CSV + census tract shapefile
 ```
 
@@ -52,6 +72,6 @@ To regenerate the data: `python tools/build_data.py data/raw`.
 
 ## Data
 
-City of Calgary, *Calgary Equity Index 2024* ([data.calgary.ca, dataset i6pu-a35d](https://data.calgary.ca/Demographics/Calgary-Equity-Index-2024/i6pu-a35d)), used under the Open Government Licence – City of Calgary. In the CEI, a higher score means **more** need and barriers; the game flips this so that a higher rating is better.
+City of Calgary, *Calgary Equity Index 2024* ([data.calgary.ca, dataset i6pu-a35d](https://data.calgary.ca/Demographics/Calgary-Equity-Index-2024/i6pu-a35d)), used under the Open Government Licence – City of Calgary. In the CEI, a higher score means **more** need and barriers; the game flips this so a higher rating is better. Indicators are grouped under the six domains by theme. District values are simple averages of their tracts. Population and home counts are estimates (about 4,500 people per tract).
 
-The game's effect model, costs and grants are simplified game mechanics. They are not predictions of what real investments would do. River, road and landmark positions are approximate.
+The game's effect model, costs, grants and events are simplified game mechanics. They are not predictions of what real investments would do. River, road and landmark positions are approximate.

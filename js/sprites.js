@@ -1,5 +1,5 @@
 // Drawing primitives: true 2.5D isometric boxes (top + both visible sides, each shaded differently),
-// the ten player buildings, the decorative city fabric, Calgary landmarks, and the residents.
+// the player buildings, the decorative city fabric, Calgary landmarks, and the residents.
 (function () {
   const CP = window.CP;
   const S = (CP.sprites = {});
@@ -520,6 +520,123 @@
       p.tree(6, 40, 10, "#37b24d");
       p.tree(42, -6, 8, "#2f9e44");
     },
+    // grey sheds with a saw-tooth roof and two smoking chimneys
+    factory(p, t) {
+      p.shadow(-50, -34, 100, 70, 40);
+      p.box(-50, -34, 0, 74, 68, 22, "#adb5bd", "#868e96");
+      for (let i = 0; i < 4; i++) p.box(-50 + i * 18.5, -34, 22, 18.5, 68, 7, "#ced4da", i % 2 ? "#74c0fc" : "#a5d8ff");
+      p.box(24, -20, 0, 24, 40, 30, "#868e96", "#6c757d", { win: true });
+      p.cyl(-30, -14, 29, 6, 40, "#a61e4d", "#5c0f2c");
+      p.cyl(-6, 14, 29, 6, 32, "#a61e4d", "#5c0f2c");
+      p.box(-50, -34, 22.2, 74, 3, 2, "#e03131");
+      smoke(p, -30, -14, 69, t, 1);
+      smoke(p, -6, 14, 61, t, 1.7);
+    },
+    // long dark server halls, cooling fans on the roof, blinking status lights
+    datacentre(p, t) {
+      p.shadow(-54, -38, 108, 76, 30);
+      p.box(-54, -38, 0, 108, 76, 26, "#343a40", "#495057");
+      for (let i = 0; i < 4; i++) for (let j = 0; j < 2; j++) {
+        p.cyl(-36 + i * 24, -18 + j * 36, 26, 8, 3, "#adb5bd", "#212529");
+        const a = ((t || 0) * 6 + i + j) % 6.28;
+        p.seg([-36 + i * 24 - Math.cos(a) * 6, -18 + j * 36 - Math.sin(a) * 6, 29.5], [-36 + i * 24 + Math.cos(a) * 6, -18 + j * 36 + Math.sin(a) * 6, 29.5], "#dee2e6", Math.max(1, p.k * 1.4));
+      }
+      const blink = Math.floor((t || 0) * 3) % 3;
+      for (let i = 0; i < 6; i++) p.box(54, -32 + i * 11, 6, 0.6, 6, 3, i % 3 === blink ? "#69db7c" : "#5c7cfa");
+      p.box(-58, -42, 0, 3, 84, 32, "#5c7cfa");
+    },
+    // round settling tanks of blue water beside a small control building
+    wastewater(p, t) {
+      p.flat(-58, -58, 0, 116, 116, "#b8c2cc");
+      p.shadow(-50, -50, 100, 100, 14);
+      for (const [x, y] of [[-26, -26], [26, -26], [-26, 26]]) {
+        p.cyl(x, y, 0, 21, 12, "#ced4da", "#22b8cf");
+        p.disc(x, y, 12.2, 15, "#66d9e8", true);
+        const a = (t || 0) * 0.8 + x;
+        p.seg([x, y, 12.5], [x + Math.cos(a) * 15, y + Math.sin(a) * 15, 12.5], "#495057", Math.max(1, p.k * 1.6));
+      }
+      p.box(12, 12, 0, 34, 30, 18, "#e9ecef", "#1098ad", { win: true });
+    },
+  };
+
+  // rising, fading smoke puffs from a chimney top
+  function smoke(p, x, y, z, t, seed) {
+    const c = p.ctx;
+    for (let i = 0; i < 5; i++) {
+      const k = (((t || 0) * 0.35 + i / 5 + seed * 0.13) % 1);
+      const sx = p.X(x, y) + (k * 22 + Math.sin(k * 6 + seed) * 4) * p.k;
+      const sy = p.Y(x, y, z) - k * 46 * p.k;
+      c.fillStyle = `rgba(90,94,104,${0.55 * (1 - k)})`;
+      c.beginPath(); c.arc(sx, sy, (5 + k * 12) * p.k, 0, 7); c.fill();
+    }
+  }
+
+  // an empty building lot: zone-tinted iso plate with a dashed outline (and an existing home, if any)
+  S.lot = function (ctx, lot, cx, cy, k, o) {
+    o = o || {};
+    const p = Pen(ctx, cx, cy, k);
+    const z = CP.ZONES[lot.zone];
+    if (!o.housesOnly) {
+      p.flat(-62, -62, 0, 124, 124, o.fill || CP.hexA(z.color, o.locked ? 0.12 : 0.34), true);
+      ctx.save();
+      ctx.setLineDash(o.solid ? [] : [8, 6]);
+      ctx.strokeStyle = o.stroke || (o.locked ? "rgba(40,40,50,0.7)" : CP.hexA(z.color, 1));
+      ctx.lineWidth = o.width || 2.4;
+      ctx.stroke();
+      ctx.restore();
+    }
+    if (lot.house && !o.ghost) {
+      const hk = k * 1.25;
+      S.ambient(ctx, { kind: "house", wall: "#f2e6d0", roof: "#a9746e", h: 13 }, p.X(-22, -10), p.Y(-22, -10, 0), hk);
+      S.ambient(ctx, { kind: "house", wall: "#e8d8c3", roof: "#5d6d7e", h: 12 }, p.X(22, 18), p.Y(22, 18, 0), hk);
+    }
+  };
+
+  // the CEI-SAT 1 satellite (shown big when zoomed out): gold body, two solar wings, dish and antenna
+  S.satellite = function (ctx, cx, cy, s, t) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(Math.sin(t * 0.4) * 0.05 - 0.12);
+    ctx.scale(s, s);
+    // solar wings
+    for (const dir of [-1, 1]) {
+      ctx.fillStyle = "#adb5bd";
+      ctx.fillRect(dir > 0 ? 26 : -46, -2, 20, 4);
+      ctx.save();
+      ctx.translate(dir * 98, 0);
+      ctx.fillStyle = "#1c3d6e"; ctx.strokeStyle = "#a5d8ff"; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.rect(-52, -24, 104, 48); ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = "rgba(165,216,255,0.55)"; ctx.lineWidth = 0.8;
+      for (let i = -39; i < 52; i += 13) { ctx.beginPath(); ctx.moveTo(i, -24); ctx.lineTo(i, 24); ctx.stroke(); }
+      ctx.beginPath(); ctx.moveTo(-52, 0); ctx.lineTo(52, 0); ctx.stroke();
+      const g = ctx.createLinearGradient(-52, -24, 52, 24);
+      g.addColorStop(0, "rgba(255,255,255,0)"); g.addColorStop(0.5, `rgba(255,255,255,${0.12 + 0.1 * Math.sin(t * 1.3 + dir)})`); g.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = g; ctx.fillRect(-52, -24, 104, 48);
+      ctx.restore();
+    }
+    // body: gold foil box
+    const bg = ctx.createLinearGradient(-26, -30, 26, 30);
+    bg.addColorStop(0, "#ffe8a3"); bg.addColorStop(0.5, "#e0a526"); bg.addColorStop(1, "#9c6b0c");
+    ctx.fillStyle = bg; ctx.strokeStyle = "#5c3d06"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.roundRect(-26, -32, 52, 64, 6); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = "rgba(92,61,6,0.45)"; ctx.lineWidth = 1;
+    for (let y = -20; y < 32; y += 12) { ctx.beginPath(); ctx.moveTo(-26, y); ctx.lineTo(26, y + 3); ctx.stroke(); }
+    // red & white YYC band
+    ctx.fillStyle = "#c8102e"; ctx.fillRect(-26, -6, 52, 9);
+    ctx.fillStyle = "#fff"; ctx.font = "700 7px Inter, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("CEI-SAT 1", 0, -1.5);
+    // camera lens looking down at Calgary
+    ctx.fillStyle = "#212529"; ctx.beginPath(); ctx.arc(0, 40, 11, 0, 7); ctx.fill();
+    ctx.fillStyle = "#4dabf7"; ctx.beginPath(); ctx.arc(0, 40, 6, 0, 7); ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.7)"; ctx.beginPath(); ctx.arc(-2, 38, 2, 0, 7); ctx.fill();
+    // dish + antenna
+    ctx.strokeStyle = "#dee2e6"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, -32); ctx.lineTo(0, -48); ctx.stroke();
+    ctx.fillStyle = "#f1f3f5"; ctx.beginPath(); ctx.ellipse(0, -52, 16, 6, 0, Math.PI, 0); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = "#868e96"; ctx.lineWidth = 1; ctx.stroke();
+    const blink = Math.sin(t * 4) > 0.6;
+    ctx.fillStyle = blink ? "#ff4d6d" : "#7a1f2e"; ctx.beginPath(); ctx.arc(20, -28, 2.5, 0, 7); ctx.fill();
+    ctx.restore();
   };
 
   // k = px per design unit. o.plate === false hides the coloured lot; o.ring overrides its outline colour.
@@ -728,6 +845,6 @@
       ctx.stroke();
     }
   };
-  // residents are drawn large enough to click from orbit
-  S.residentScale = (z) => Math.max(z, 0.3);
+  // residents are drawn big enough to see and click from orbit
+  S.residentScale = (z) => Math.max(z * 1.35, 0.46);
 })();

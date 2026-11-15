@@ -75,69 +75,30 @@
     return c;
   }
 
+  // Flat-colour ground: every tract gets one calm colour from its real land use (no per-pixel noise),
+  // so lots, buildings and borders stand out.
   function buildCityTerrain() {
     const M = 3000;
     const b = D.bounds;
     const mpp = 18; // metres per pixel
     const x0 = b[0] - M, y0 = b[1] - M;
     const W = Math.ceil((b[2] - b[0] + 2 * M) / mpp), H = Math.ceil((b[3] - b[1] + 2 * M) / mpp);
-    // 1) tract id map
-    const idc = makeCanvas(W, H);
-    const ic = idc.getContext("2d");
-    ic.imageSmoothingEnabled = false;
-    ic.setTransform(1 / mpp, 0, 0, 1 / mpp, -x0 / mpp, -y0 / mpp);
-    D.tracts.forEach((t, i) => {
-      const v = i + 1;
-      ic.fillStyle = `rgb(${v & 255},${v >> 8},77)`;
-      ic.fill(t.path);
-    });
-    const ids = ic.getImageData(0, 0, W, H).data;
-    // 2) colour every pixel from its tract's real data
     const c = makeCanvas(W, H);
     const ctx = c.getContext("2d");
-    const img = ctx.createImageData(W, H);
-    const px = img.data;
-    const tracts = D.tracts;
-    for (let y = 0; y < H; y++) {
-      for (let x = 0; x < W; x++) {
-        const o = (y * W + x) * 4;
-        const wx = x0 + x * mpp, wy = y0 + y * mpp;
-        let id = 0;
-        if (ids[o + 2] > 60 && ids[o + 2] < 95) id = ids[o] + (ids[o + 1] << 8);
-        const t = id > 0 && id <= tracts.length ? tracts[id - 1] : null;
-        const n = CP.hash(x >> 1, y >> 1, 3); // 2x2 pixel blocks: calmer texture from orbit
-        let r, g, bl;
-        if (!t) {
-          px[o + 3] = 0; // let the regional farmland show through
-          continue;
-        } else {
-          const dens = t.average_walkscore / 100;
-          const canopy = t.tree_canopy / 100;
-          const park = t.park_area_perc / 100;
-          const zone = CP.hash(Math.floor(wx / 260), Math.floor(wy / 260), 11);
-          if (zone < park * 0.9) {
-            const k = 0.9 + n * 0.15;
-            r = 92 * k; g = 150 * k; bl = 76 * k;
-            if (n < canopy * 1.6 + 0.1) { r = 52; g = 102 + n * 30; bl = 52; }
-          } else if (n < canopy * 1.25) {
-            r = 54 + n * 30; g = 104 + n * 40; bl = 56;
-          } else {
-            // soft roof/lawn mottling only: no street grid (major roads are drawn as vectors)
-            const roof = CP.hash(x >> 2, y >> 2, 7);
-            const light = 0.9 + roof * 0.16;
-            const cool = dens; // denser = greyer, suburbs = warmer roofs / lawns
-            r = CP.lerp(190, 156, cool) * light;
-            g = CP.lerp(180, 156, cool) * light;
-            bl = CP.lerp(150, 160, cool) * light;
-            if (roof < 0.25 && dens < 0.6) { r = 136; g = 164; bl = 104; } // lawns
-          }
-        }
-        px[o] = r; px[o + 1] = g; px[o + 2] = bl; px[o + 3] = 255;
-      }
-    }
-    ctx.putImageData(img, 0, 0);
-    // 3) vector features
     ctx.setTransform(1 / mpp, 0, 0, 1 / mpp, -x0 / mpp, -y0 / mpp);
+    D.tracts.forEach((t) => {
+      const dens = CP.clamp(t.average_walkscore / 100, 0, 1);
+      const green = CP.clamp(t.park_area_perc / 60 + t.tree_canopy / 80, 0, 1);
+      // suburbs: soft sage; dense core: warm grey; leafy or park-heavy: greener
+      const r = CP.lerp(CP.lerp(196, 214, dens), 150, green * 0.6);
+      const g = CP.lerp(CP.lerp(206, 206, dens), 190, green * 0.6);
+      const bl = CP.lerp(CP.lerp(170, 196, dens), 140, green * 0.6);
+      ctx.fillStyle = `rgb(${r | 0},${g | 0},${bl | 0})`;
+      ctx.fill(t.path);
+      ctx.strokeStyle = ctx.fillStyle;
+      ctx.lineWidth = mpp * 1.5; // seal hairline gaps between tracts
+      ctx.stroke(t.path);
+    });
     drawVectorTerrain(ctx, mpp);
     return { canvas: c, x0, y0, mpp, W, H };
   }
@@ -150,7 +111,7 @@
     D.tracts.forEach((t) => city.addPath(t.path));
     ctx.clip(city);
     G.bigParks.forEach((p) => {
-      ctx.fillStyle = "rgba(70,128,64,0.85)";
+      ctx.fillStyle = "#8cc276";
       ctx.fill(p.path);
     });
     ctx.restore();
@@ -197,7 +158,7 @@
       for (let x = 0; x < W; x++) {
         const o = (y * W + x) * 4;
         const wx = -R + x * mpp, wy = -R + y * mpp;
-        const n = CP.hash(x, y, 1);
+        const n = CP.hash(Math.floor(wx / 2400), Math.floor(wy / 2400), 1); // big calm patches, no pixel speckle
         let col;
         // the Rockies to the west, foothills between
         const west = -wx + Math.sin(wy / 9000) * 4000 + Math.sin(wy / 2300) * 1500;
@@ -208,19 +169,19 @@
         } else if (west > 48000) {
           const k = (west - 48000) / 14000;
           col = [CP.lerp(86, 70, k), CP.lerp(118, 98, k), CP.lerp(70, 84, k)];
-          if (n < 0.35) col = [50, 84, 54];
+          if (n < 0.35) col = [72, 104, 70];
         } else if (west > 30000) {
-          col = n < 0.25 ? [60, 100, 58] : [128, 146, 88];
+          col = n < 0.25 ? [120, 140, 92] : [140, 152, 102];
         } else {
           // quarter-section farmland: gentle variations of prairie gold and green
           const fx = Math.floor(wx / 800), fy = Math.floor(wy / 800);
           const f = CP.hash(fx, fy, 21);
-          const pal = [[201, 184, 128], [176, 176, 112], [190, 172, 120], [160, 168, 104], [208, 194, 146], [150, 160, 98]];
+          const pal = [[194, 186, 140], [186, 182, 132], [190, 184, 138], [182, 180, 128], [196, 190, 146], [184, 182, 134]]; // calm, low-contrast fields
           col = pal[Math.floor(f * pal.length)];
           const edge = (wx - fx * 800 < 110 || wy - fy * 800 < 110);
-          if (edge) col = [col[0] * 0.92, col[1] * 0.92, col[2] * 0.9];
+          if (edge) col = [col[0] * 0.97, col[1] * 0.97, col[2] * 0.96];
         }
-        const k = 0.95 + n * 0.07;
+        const k = 1;
         px[o] = col[0] * k; px[o + 1] = col[1] * k; px[o + 2] = col[2] * k; px[o + 3] = 255;
       }
     ctx.putImageData(img, 0, 0);
@@ -277,6 +238,11 @@
     return false;
   }
   world.clearCells = () => cache.clear();
+  // is (x, y) on top of a landmark sprite? (scale < 1 relaxes the check)
+  world.landmarkNear = function (x, y, scale) {
+    for (const l of CP.LANDMARKS) if (CP.dist(l.pos[0], l.pos[1], x, y) < ((LM_CLEAR[l.kind] || 50) * world.LM_SCALE + 350) * (scale || 1)) return true;
+    return false;
+  };
 
   world.cell = function (bx, by) {
     const key = bx * 4096 + by;
@@ -295,6 +261,7 @@
     const bigPark = world.bigParkAt(cx, cy);
     const isPark = bigPark || CP.hash(bx, by, 11) < (t.park_area_perc / 100) * 0.9;
     const cls = isPark ? "park" : classify(t, h);
+    c.cls = cls;
     c.ground = cls === "park" ? "park" : cls === "industrial" ? "lot" : cls === "house" ? "lawn" : "plaza";
     const canopy = t.tree_canopy / 100;
     const tree = (x, y) => {

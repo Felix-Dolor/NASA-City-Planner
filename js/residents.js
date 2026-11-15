@@ -22,6 +22,17 @@
     return r.d.label.slice();
   }
 
+  // a need line that quotes the real CEI indicator where the district is furthest behind Calgary
+  function needLine(d, m) {
+    for (const w of sim.worstIndicators(d, m)) {
+      const tpl = CP.INDICATOR_LINES[w.ind.key];
+      if (!tpl || w.gap <= 0) continue;
+      return { text: tpl.replace("{v}", CP.fmtIndicator(w.ind, w.v)).replace("{avg}", CP.fmtIndicator(w.ind, w.avg)), ind: w.ind };
+    }
+    return { text: CP.NEED_LINES[m][d.id % 2], ind: null };
+  }
+  res.needLine = needLine;
+
   function assignNeed(r) {
     const d = r.d, m = sim.weakest(d), s = d.score[m];
     if (s >= 80) {
@@ -35,8 +46,19 @@
     // met when the metric climbs into the next band (and by at least 10 points)
     r.target = Math.min(100, Math.max((CP.bandIndex(s) + 1) * 20, s + 10));
     r.icon = CP.DOMAINS[m].icon;
-    r.line = CP.NEED_LINES[m][d.id % 2];
+    const nl = needLine(d, m);
+    r.line = nl.text;
+    r.ind = nl.ind;
   }
+
+  // a resident complains about something that just happened to their district (shown for a while)
+  res.complain = function (d, kind, line) {
+    const r = d.resident;
+    if (!r) return null;
+    const lines = CP.COMPLAINTS[kind] || [];
+    r.complaint = { line: line || lines[Math.floor(rand() * lines.length)] || "This isn't fair to us.", t: 12 };
+    return r;
+  };
 
   res.init = function () {
     res.list = sim.districts.map((d) => {
@@ -75,6 +97,7 @@
 
   res.update = function (dt) {
     for (const r of res.list) {
+      if (r.complaint && (r.complaint.t -= dt) <= 0) r.complaint = null;
       if (r.state === "thanks") {
         r.thanksT -= dt;
         if (r.thanksT <= 0) assignNeed(r);
@@ -102,6 +125,11 @@
     const u = CP.sprites.residentScale(CP.render.cam.z) * (r.look.extra.small ? 0.82 : 1);
     return [sx, sy - 112 * u];
   };
+  // what a resident says right now (a fresh complaint beats their standing need)
+  res.say = function (r) {
+    if (r.complaint) return { text: r.complaint.line, mood: "upset" };
+    return { text: r.line, mood: r.state === "need" ? "" : "happy" };
+  };
 
   // resident under a screen point, if any
   res.pick = function (px, py) {
@@ -110,7 +138,7 @@
     for (const r of res.list) {
       if (r.hidden) continue;
       const [sx, sy] = CP.render.toScreen(r.x, r.y);
-      if (Math.abs(px - sx) > 24 * u + 8 || py > sy + 8 || py < sy - 110 * u - 34) continue;
+      if (Math.abs(px - sx) > 26 * u + 10 || py > sy + 10 || py < sy - 110 * u - 40) continue;
       const dd = Math.abs(px - sx);
       if (dd < bd) { bd = dd; best = r; }
     }
